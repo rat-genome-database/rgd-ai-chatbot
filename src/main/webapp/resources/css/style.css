@@ -1,0 +1,587 @@
+/* Common Styles - RGD AI Assistant Theme */
+body {
+    font-family: 'Roboto', sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f5f5f5;
+    color: #212529;
+    font-size: 16px;
+    display: block !important;
+}
+
+.submit-btn {
+    background-color: #2B84C8;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-family: 'Roboto', sans-serif;
+    transition: background-color 0.3s;
+}
+
+.submit-btn:hover {
+    background-color: #2470AD;
+}
+
+/* Upload Button Styling */
+.upload-btn {
+    background-color: #2B84C8;
+    color: white;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-family: 'Roboto', sans-serif;
+    transition: background-color 0.3s;
+}
+
+.upload-btn:hover {
+    background-color: #2470AD;
+}
+
+/* Login Page Styles */
+.login-container {
+    max-width: 400px;
+    margin: 100px auto;
+    padding: 20px;
+    background-color: white;
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+}
+
+.form-group input[type="text"],
+.form-group input[type="password"] {
+    width: 380px;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-family: 'Roboto', sans-serif;
+}
+
+.error {
+    color: #dc3545;
+    margin-bottom: 15px;
+    padding: 10px;
+    background-color: #f8d7da;
+    border-radius: 4px;
+}
+
+.info {
+    color: #0c5460;
+    margin-bottom: 15px;
+    padding: 10px;
+    background-color: #d1ecf1;
+    border-radius: 4px;
+}
+
+/* Chat Page Styles */
+.chat-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background-color: white;
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+    height: calc(100vh - 140px);
+    display: flex;
+    flex-direction: column;
+}
+
+#chatArea {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+#header {
+    padding: 12px 20px;
+    margin-top: 0;
+    background-color: #ffffff;
+    border-bottom: 3px solid #2865A3;
+    box-shadow: none;
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+#header h2 {
+    color: #2865A3;
+    font-size: 2rem;
+    font-weight: 700;
+    margin: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    flex-grow: 1;
+    text-align: center;
+}
+
+#header .header-logo {
+    max-height: 50px;
+    width: auto;
+}
+
+#disclaimer {
+    background-color: #fff9e6;
+    border-left: 4px solid #ffc107;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #666;
+    flex-shrink: 0;
+}
+
+#disclaimerHeader {
+    padding: 10px 15px;
+    cursor: pointer;
+    user-select: none;
+}
+
+#disclaimerHeader:hover {
+    background-color: #fff3cd;
+}
+
+.disclaimer-arrow {
+    display: inline-block;
+    margin-right: 8px;
+    font-size: 10px;
+    transition: transform 0.2s ease;
+}
+
+#disclaimer.collapsed .disclaimer-arrow {
+    transform: rotate(-90deg);
+}
+
+#disclaimerContent {
+    padding: 0 15px 12px 15px;
+}
+
+#disclaimer.collapsed #disclaimerContent {
+    display: none;
+}
+
+#disclaimer a {
+    color: #3498DB;
+    text-decoration: none;
+}
+
+#disclaimer a:hover {
+    text-decoration: underline;
+}
+
+.user-info {
+    font-size: 14px;
+    color: white;
+}
+
+.logout-btn {
+    background-color: rgba(255, 255, 255, 0.2);
+    color: white;
+    padding: 6px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: 10px;
+    font-family: 'Roboto', sans-serif;
+    transition: background-color 0.3s;
+}
+
+.logout-btn:hover {
+    background-color: rgba(255, 255, 255, 0.3);
+}
+
+#transcript {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 20px;
+    background-color: #fafafa;
+}
+
+.UserEntry, .AIEntry, .RGDEntry {
+    margin-bottom: 15px;
+    padding: 12px 16px;
+    border-radius: 4px;
+    line-height: 1.5;
+    font-size: 16px !important;
+}
+
+.UserEntry {
+    background-color: #dce8f5;
+    margin-left: 20%;
+}
+
+.AIEntry {
+    background-color: #f7f7f8;
+    margin-right: 20%;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    max-width: 100%;
+}
+
+/* Reduce spacing in AI response markdown */
+.AIEntry p {
+    margin: 0.3em 0;
+}
+
+.AIEntry ul, .AIEntry ol {
+    margin: 0.3em 0;
+    padding-left: 1.5em;
+}
+
+.AIEntry li {
+    margin: 0.15em 0;
+}
+
+/* Sources Used label formatting */
+.AIEntry .sources-label {
+    display: inline-block;
+    margin-top: 0.7em;
+}
+
+.RGDEntry {
+    background-color: #f5f5f5;
+    border-left: 3px solid #2865A3;
+    font-size: 16px;
+    color: #444;
+}
+
+/* Start Over Button Section */
+.start-over-section {
+    padding: 10px 20px;
+    display: flex;
+    justify-content: flex-end;
+    border-top: 1px solid #eee;
+    background-color: #fafafa;
+    flex-shrink: 0;
+}
+
+.start-over-btn {
+    background-color: transparent;
+    color: #28a745;
+    padding: 8px 16px;
+    border: 1px solid #28a745;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 14px;
+    font-family: 'Roboto', sans-serif;
+    transition: all 0.3s ease;
+}
+
+.start-over-btn:hover {
+    background-color: #28a745;
+    color: white;
+}
+
+.start-over-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.start-over-btn:disabled:hover {
+    background-color: transparent;
+    color: #28a745;
+}
+
+.input-area {
+    padding: 15px 20px;
+    border-top: 1px solid #e0e0e0;
+    display: flex;
+    gap: 10px;
+    background-color: white;
+    border-radius: 0 0 4px 4px;
+    flex-shrink: 0;
+}
+
+#userInput {
+    flex: 1;
+    padding: 10px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    resize: none;
+    font-family: 'Roboto', sans-serif;
+    font-size: 15px;
+}
+
+#userInput:focus {
+    outline: none;
+    border-color: #2B84C8;
+    box-shadow: 0 0 0 2px rgba(43, 132, 200, 0.2);
+}
+
+/* Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+}
+
+.modal-content {
+    background-color: white;
+    margin: 10% auto;
+    padding: 24px;
+    width: 90%;
+    max-width: 500px;
+    border-radius: 4px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    position: relative;
+}
+
+.modal-content h2 {
+    margin-top: 0;
+    color: #212529;
+    font-size: 20px;
+    font-weight: 500;
+}
+
+.closeModalSpan,
+.closeUrlModalSpan {
+    position: absolute;
+    right: 20px;
+    top: 15px;
+    font-size: 28px;
+    font-weight: 300;
+    cursor: pointer;
+    color: #999;
+    transition: color 0.3s;
+}
+
+.closeModalSpan:hover,
+.closeUrlModalSpan:hover {
+    color: #333;
+}
+
+/* Loading Spinner */
+.loader {
+    visibility: hidden;
+    text-align: center;
+    margin-top: 15px;
+}
+
+.loading-spinner {
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #2B84C8;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+    margin: 0 auto;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Controls section */
+#controls {
+    display: flex;
+    gap: 10px;
+    padding: 15px 20px;
+    background-color: #fafafa;
+    border-top: 1px solid #eee;
+    flex-shrink: 0;
+}
+
+/* Style for URL input */
+#urlInput {
+    width: 100%;
+    padding: 10px 12px;
+    margin-bottom: 15px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-family: 'Roboto', sans-serif;
+}
+
+#urlInput:focus {
+    outline: none;
+    border-color: #2B84C8;
+    box-shadow: 0 0 0 2px rgba(43, 132, 200, 0.2);
+}
+
+#urlLoader {
+    visibility: hidden;
+}
+
+/* Model switch badge */
+.model-switch {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+}
+
+.model-switch a {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    padding: 6px 12px;
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    transition: background-color 0.3s;
+}
+
+.model-switch a:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* AI Typing Indicator */
+.typing-indicator {
+    display: none;
+    padding: 12px 16px;
+    margin: 0 20% 15px 0;
+    background-color: #f5f5f5;
+    border-radius: 4px;
+    width: fit-content;
+}
+
+.typing-indicator.active {
+    display: block;
+}
+
+.typing-dots {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.typing-dots span {
+    font-weight: 500;
+    color: #666;
+}
+
+.typing-dots .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #2B84C8;
+    animation: typingDot 1.4s infinite;
+}
+
+.typing-dots .dot:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.typing-dots .dot:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+.typing-dots .dot:nth-child(4) {
+    animation-delay: 0.6s;
+}
+
+@keyframes typingDot {
+    0%, 60%, 100% {
+        opacity: 0.3;
+        transform: scale(0.8);
+    }
+    30% {
+        opacity: 1;
+        transform: scale(1.2);
+    }
+}
+
+
+/* Force gray background on RGD content wrapper so white chat-container pops out */
+#contentArea, #mainBody {
+    background-color: #f5f5f5 !important;
+}
+
+/* Bootstrap & RGD Stylesheet Overrides */
+/* rgd_styles-3.css sets p,a,td,ul,li to 12px — override for chat area */
+.chat-container,
+.chat-container td,
+.chat-container p,
+.chat-container a,
+.chat-container ul,
+.chat-container li,
+.chat-container div {
+    font-size: 16px !important;
+    font-family: 'Roboto', sans-serif !important;
+}
+
+.chat-container #header h2 {
+    font-size: 32px !important;
+    font-weight: 700 !important;
+    color: #2865A3 !important;
+}
+
+#userInput {
+    font-size: 15px !important;
+    line-height: 1.3 !important;
+    padding: 10px 12px !important;
+}
+
+.submit-btn {
+    font-size: 14px !important;
+    line-height: 1.3 !important;
+    padding: 10px 20px !important;
+}
+
+.upload-btn {
+    font-size: 14px !important;
+    padding: 8px 16px !important;
+}
+
+.start-over-btn {
+    font-size: 14px !important;
+}
+
+#disclaimer,
+#disclaimer p,
+#disclaimer div,
+#disclaimerHeader,
+#disclaimerContent {
+    font-size: 13px !important;
+}
+
+/* Modal overrides — prevent RGD/Bootstrap styles from breaking modal layout */
+.modal-content,
+.modal-content h2,
+.modal-content form,
+.modal-content input,
+.modal-content label,
+.modal-content div {
+    font-size: 16px !important;
+    font-family: 'Roboto', sans-serif !important;
+}
+
+.modal-content h2 {
+    font-size: 20px !important;
+    font-weight: 500 !important;
+    color: #212529 !important;
+    margin-bottom: 15px !important;
+}
+
+.modal-content input[type="file"] {
+    display: block !important;
+    margin-bottom: 15px !important;
+    width: 100% !important;
+    padding: 8px 0 !important;
+}
+
+.modal-content input[type="url"] {
+    display: block !important;
+    margin-bottom: 15px !important;
+}
+
+.modal-content .submit-btn {
+    font-size: 14px !important;
+}
+
+/* Import Roboto font */
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap');

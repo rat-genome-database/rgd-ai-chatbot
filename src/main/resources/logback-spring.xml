@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Import Spring Boot default logging -->
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <!-- Read timing log path from application.properties -->
+    <springProperty scope="context" name="TIMING_LOG_PATH" source="timing.log.path"
+                    defaultValue="logs/timing.log"/>
+
+    <!-- Main application log file (controlled by Spring Boot application.properties) -->
+    <springProperty scope="context" name="APP_LOG_PATH" source="logging.file.name"
+                    defaultValue="logs/aiassistant.log"/>
+
+    <appender name="APP_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${APP_LOG_PATH}</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${APP_LOG_PATH}.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+            <maxFileSize>10MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Timing log file - separate file for performance tracking -->
+    <appender name="TIMING_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${TIMING_LOG_PATH}</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${TIMING_LOG_PATH}.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+            <maxFileSize>10MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- TIMING logger - writes ONLY to timing.log (additivity=false prevents it going to root) -->
+    <logger name="TIMING" level="INFO" additivity="false">
+        <appender-ref ref="TIMING_FILE"/>
+    </logger>
+
+    <!-- Root logger - console + app file -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="APP_FILE"/>
+    </root>
+</configuration>

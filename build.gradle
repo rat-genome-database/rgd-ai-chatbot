@@ -1,0 +1,76 @@
+plugins {
+    id 'java'
+    id 'war'
+    id 'org.springframework.boot' version '3.2.2'
+    id 'io.spring.dependency-management' version '1.1.4'
+}
+
+group = 'edu.mcw.rgdai'
+
+
+tasks.named('processResources') {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+java {
+    sourceCompatibility = '17'
+}
+
+repositories {
+    mavenCentral()
+    maven { url 'https://repo.spring.io/milestone' }
+    maven { url 'https://mvnrepository.com/artifact/com.pgvector/pgvector' }
+}
+
+ext {
+    set('springAiVersion', "1.0.0-M4")
+}
+
+dependencies {
+    implementation fileTree(dir: 'lib', include: '*.jar')
+    // Spring Boot Starters
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+
+    // JSP Support
+    implementation 'org.apache.tomcat.embed:tomcat-embed-jasper'
+    implementation 'jakarta.servlet.jsp.jstl:jakarta.servlet.jsp.jstl-api'
+    implementation 'org.glassfish.web:jakarta.servlet.jsp.jstl'
+
+    // Spring Security JSP Tags
+    implementation 'org.springframework.security:spring-security-taglibs'
+
+    // Spring AI - using BOM managed versions
+    implementation 'org.springframework.ai:spring-ai-openai-spring-boot-starter'
+    implementation 'org.springframework.ai:spring-ai-ollama-spring-boot-starter'
+    implementation 'org.springframework.ai:spring-ai-tika-document-reader'
+//    implementation 'org.springframework.ai:spring-ai-vertex-ai-embedding:1.0.0-M4'
+    implementation 'org.springframework.ai:spring-ai-core:1.0.0-M4'
+
+    //for postgres
+    implementation("org.postgresql:postgresql:42.7.7")
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation group: 'com.pgvector', name: 'pgvector', version: '0.1.3'
+    //for HTML parsing
+    implementation 'org.jsoup:jsoup:1.17.2'
+    implementation group: 'commons-lang', name: 'commons-lang', version: '2.6'
+    // Provided Dependencies
+    providedRuntime 'org.springframework.boot:spring-boot-starter-tomcat'
+    
+    // Gson (required by scge-platform-core ClinicalTrailDAO)
+    implementation 'com.google.code.gson:gson:2.10.1'
+
+    // Test Dependencies
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.ai:spring-ai-bom:${springAiVersion}"
+    }
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
