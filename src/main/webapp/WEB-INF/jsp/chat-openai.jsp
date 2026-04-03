@@ -77,11 +77,27 @@
         <div class="start-over-section">
             <button id="startOverBtn" class="start-over-btn">Clear memory</button>
         </div>
-        <%if((request.getServerName().equals("localhost"))){%>
+        <%if((request.getServerName().equals("localhost")) || (request.getServerName().equals("dev.rgd.mcw.edu")) || (request.getServerName().equals("pipelines.rgd.mcw.edu"))){%>
+        <style>
+            .curation-link {
+                display: inline-block !important;
+                padding: 8px 18px !important;
+                background: #2865a3 !important;
+                color: white !important;
+                text-decoration: none !important;
+                border-radius: 6px !important;
+                font-size: 14px !important;
+                font-weight: 500 !important;
+                cursor: pointer !important;
+            }
+            .curation-link:hover {
+                background: #1e4f82 !important;
+                color: white !important;
+                text-decoration: none !important;
+            }
+        </style>
         <div id="controls">
-            <button id="uploadFile" class="upload-btn">Upload File</button>
-            <button id="processUrl" class="upload-btn">Process URL</button>
-            <%-- <button id="loadTrials" class="upload-btn">Load Clinical Trials</button> --%>
+            <a href="<%= contextPath %>/curation" target="_blank" class="curation-link">Curation</a>
         </div>
         <%}%>
         <div class="input-area">

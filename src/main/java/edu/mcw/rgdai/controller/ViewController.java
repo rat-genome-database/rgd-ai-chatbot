@@ -73,4 +73,10 @@ public class ViewController {
         return "chat";
     }
 
+    @GetMapping("/curation")
+    public String curation() {
+        logger.info("Accessing curation page");
+        return "curation";
+    }
+
 }
