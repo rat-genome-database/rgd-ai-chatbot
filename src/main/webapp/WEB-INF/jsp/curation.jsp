@@ -22,6 +22,7 @@
             <p class="header-subtitle">Manage documents in the RatChat knowledge base</p>
         </div>
         <div class="header-right">
+            <a href="<%= contextPath %>/report-loader" target="_blank" class="action-btn upload-btn" style="text-decoration:none; margin-right:10px;"><i class="fas fa-file-import"></i> Report Loader</a>
             <a href="<%= contextPath %>/chat" class="back-to-chat-btn"><i class="fas fa-comments"></i> Back to Chat</a>
         </div>
     </div>

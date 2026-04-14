@@ -79,4 +79,10 @@ public class ViewController {
         return "curation";
     }
 
+    @GetMapping("/report-loader")
+    public String reportLoader() {
+        logger.info("Accessing report loader page");
+        return "report-loader";
+    }
+
 }

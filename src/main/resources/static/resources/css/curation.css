@@ -181,7 +181,9 @@ body {
     font-weight: 400 !important;
 }
 
-.back-to-chat-btn {
+.curation-container a.back-to-chat-btn,
+.curation-container a.back-to-chat-btn:link,
+.curation-container a.back-to-chat-btn:visited {
     display: inline-flex !important;
     align-items: center !important;
     gap: 8px !important;
@@ -196,8 +198,8 @@ body {
     border: none !important;
 }
 
-.back-to-chat-btn:hover,
-.back-to-chat-btn:focus {
+.curation-container a.back-to-chat-btn:hover,
+.curation-container a.back-to-chat-btn:focus {
     background: #1e4f82 !important;
     color: white !important;
     text-decoration: none !important;
@@ -337,12 +339,16 @@ body {
     font-family: 'Inter', 'Roboto', sans-serif !important;
 }
 
-.upload-btn {
+.curation-container a.upload-btn,
+.curation-container a.upload-btn:link,
+.curation-container a.upload-btn:visited,
+.curation-container button.upload-btn {
     background: linear-gradient(135deg, #2865a3, #1e4f82) !important;
     color: white !important;
 }
 
-.upload-btn:hover {
+.curation-container a.upload-btn:hover,
+.curation-container button.upload-btn:hover {
     box-shadow: 0 4px 12px rgba(40, 101, 163, 0.4) !important;
     transform: translateY(-1px) !important;
 }

@@ -1,0 +1,460 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* ============================================================
+   RGD Header Override Block (same as curation.css)
+   ============================================================ */
+.loader-container,
+.loader-container div,
+.loader-container span,
+.loader-container p,
+.loader-container h1,
+.loader-container h2,
+.loader-container h3,
+.loader-container h4,
+.loader-container a,
+.loader-container button,
+.loader-container input,
+.loader-container select,
+.loader-container textarea,
+.loader-container label,
+.loader-container td,
+.loader-container th,
+.loader-container tr,
+.loader-container ul,
+.loader-container li,
+.loader-container table {
+    font-family: 'Inter', 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif !important;
+    box-sizing: border-box !important;
+}
+
+.loader-container .fas,
+.loader-container .fa-solid,
+.loader-container .far,
+.loader-container .fa-regular,
+.loader-container .fab {
+    font-family: "Font Awesome 6 Free" !important;
+    font-weight: 900 !important;
+    font-style: normal !important;
+    -moz-osx-font-smoothing: grayscale !important;
+    -webkit-font-smoothing: antialiased !important;
+    display: inline-block !important;
+    text-rendering: auto !important;
+    line-height: 1 !important;
+    font-variant: normal !important;
+    text-transform: none !important;
+}
+
+.loader-container a,
+.loader-container a:link,
+.loader-container a:visited,
+.loader-container a:active {
+    color: inherit !important;
+    text-decoration: none !important;
+    font-weight: inherit !important;
+}
+
+/* ============================================================
+   Layout
+   ============================================================ */
+.loader-container {
+    max-width: 1200px !important;
+    margin: 24px auto !important;
+    padding: 0 24px !important;
+}
+
+/* ============================================================
+   Header
+   ============================================================ */
+.loader-header {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: flex-start !important;
+    margin-bottom: 24px !important;
+}
+
+.loader-header h2 {
+    font-size: 24px !important;
+    font-weight: 700 !important;
+    color: #1a1a2e !important;
+    margin: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+}
+
+.header-subtitle {
+    font-size: 14px !important;
+    color: #6b7280 !important;
+    margin: 4px 0 0 0 !important;
+}
+
+.loader-container a.back-btn,
+.loader-container a.back-btn:link,
+.loader-container a.back-btn:visited {
+    padding: 8px 18px !important;
+    background: #2865a3 !important;
+    color: white !important;
+    border-radius: 8px !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    transition: background 0.2s !important;
+}
+
+.loader-container a.back-btn:hover {
+    background: #1e4f82 !important;
+    color: white !important;
+}
+
+/* ============================================================
+   Section Cards
+   ============================================================ */
+.section-card {
+    background: white !important;
+    border-radius: 12px !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+    padding: 24px !important;
+    margin-bottom: 20px !important;
+}
+
+.section-title {
+    font-size: 18px !important;
+    font-weight: 600 !important;
+    color: #1a1a2e !important;
+    margin: 0 0 16px 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+}
+
+/* ============================================================
+   Controls Row (dropdowns)
+   ============================================================ */
+.controls-row {
+    display: flex !important;
+    gap: 16px !important;
+    align-items: flex-end !important;
+    margin-bottom: 16px !important;
+    flex-wrap: wrap !important;
+}
+
+.select-group {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+    min-width: 160px !important;
+}
+
+.select-group label {
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    color: #6b7280 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+}
+
+.select-group select {
+    padding: 9px 12px !important;
+    border: 1px solid #d1d5db !important;
+    border-radius: 8px !important;
+    font-size: 14px !important;
+    background: white !important;
+    cursor: pointer !important;
+    color: #1a1a2e !important;
+}
+
+.select-group select:focus {
+    outline: none !important;
+    border-color: #2865a3 !important;
+    box-shadow: 0 0 0 3px rgba(40, 101, 163, 0.1) !important;
+}
+
+.select-group select:disabled {
+    opacity: 0.5 !important;
+    cursor: not-allowed !important;
+}
+
+.count-display {
+    padding: 9px 16px !important;
+    background: #dbeafe !important;
+    color: #1e4f82 !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    font-size: 14px !important;
+    white-space: nowrap !important;
+}
+
+/* ============================================================
+   URL Row
+   ============================================================ */
+.url-row {
+    gap: 10px !important;
+    margin-bottom: 16px !important;
+}
+
+.url-input {
+    flex: 1 !important;
+    padding: 10px 14px !important;
+    border: 1px solid #d1d5db !important;
+    border-radius: 8px !important;
+    font-size: 14px !important;
+    color: #1a1a2e !important;
+}
+
+.url-input:focus {
+    outline: none !important;
+    border-color: #2865a3 !important;
+    box-shadow: 0 0 0 3px rgba(40, 101, 163, 0.1) !important;
+}
+
+/* ============================================================
+   Buttons
+   ============================================================ */
+.action-btn {
+    padding: 9px 18px !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    cursor: pointer !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    transition: all 0.2s !important;
+    white-space: nowrap !important;
+}
+
+.convert-btn {
+    background: #2865a3 !important;
+    color: white !important;
+}
+
+.convert-btn:hover {
+    background: #1e4f82 !important;
+}
+
+.convert-btn:disabled {
+    background: #9ca3af !important;
+    cursor: not-allowed !important;
+}
+
+.bulk-btn {
+    background: #059669 !important;
+    color: white !important;
+}
+
+.bulk-btn:hover {
+    background: #047857 !important;
+}
+
+.bulk-btn:disabled {
+    background: #9ca3af !important;
+    cursor: not-allowed !important;
+}
+
+.danger-btn {
+    background: #dc2626 !important;
+    color: white !important;
+}
+
+.danger-btn:hover {
+    background: #b91c1c !important;
+}
+
+/* ============================================================
+   Conversion Result
+   ============================================================ */
+.result-meta {
+    padding: 12px 16px !important;
+    background: #f0f7ff !important;
+    border: 1px solid #dbeafe !important;
+    border-radius: 8px !important;
+    margin-bottom: 12px !important;
+}
+
+.meta-row {
+    font-size: 13px !important;
+    color: #374151 !important;
+    line-height: 1.6 !important;
+}
+
+.meta-label {
+    color: #6b7280 !important;
+    font-weight: 500 !important;
+}
+
+.markdown-preview {
+    max-height: 500px !important;
+    overflow-y: auto !important;
+    padding: 16px !important;
+    background: #f9fafb !important;
+    border: 1px solid #e5e7eb !important;
+    border-radius: 8px !important;
+    font-family: 'Fira Code', 'Consolas', 'Courier New', monospace !important;
+    font-size: 12px !important;
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+    line-height: 1.5 !important;
+    color: #1a1a2e !important;
+    margin: 0 !important;
+}
+
+/* ============================================================
+   Error Display
+   ============================================================ */
+.error-display {
+    padding: 12px 16px !important;
+    background: #fef2f2 !important;
+    border: 1px solid #fecaca !important;
+    border-radius: 8px !important;
+    color: #991b1b !important;
+    font-size: 14px !important;
+    align-items: center !important;
+    gap: 8px !important;
+    margin-top: 16px !important;
+}
+
+/* ============================================================
+   Progress (Phase 2)
+   ============================================================ */
+.bulk-controls {
+    display: flex !important;
+    gap: 10px !important;
+    margin-bottom: 16px !important;
+}
+
+.progress-stats {
+    display: flex !important;
+    gap: 12px !important;
+    margin-bottom: 12px !important;
+    flex-wrap: wrap !important;
+}
+
+.stat-pill {
+    padding: 6px 14px !important;
+    border-radius: 20px !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+}
+
+.stat-total { background: #e5e7eb !important; color: #374151 !important; }
+.stat-completed { background: #d1fae5 !important; color: #065f46 !important; }
+.stat-failed { background: #fee2e2 !important; color: #991b1b !important; }
+.stat-pending { background: #dbeafe !important; color: #1e4f82 !important; }
+
+.progress-current {
+    font-size: 13px !important;
+    color: #6b7280 !important;
+    margin-bottom: 8px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+
+.progress-track {
+    height: 12px !important;
+    background: #e5e7eb !important;
+    border-radius: 6px !important;
+    overflow: hidden !important;
+}
+
+.progress-fill {
+    height: 100% !important;
+    background: linear-gradient(90deg, #2865a3, #3b82f6) !important;
+    border-radius: 6px !important;
+    transition: width 0.3s ease !important;
+}
+
+.progress-pct {
+    text-align: center !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    color: #2865a3 !important;
+    margin-top: 4px !important;
+}
+
+/* ============================================================
+   Data Table
+   ============================================================ */
+.table-wrapper {
+    overflow-x: auto !important;
+}
+
+.data-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+}
+
+.data-table th {
+    padding: 10px 14px !important;
+    text-align: left !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+    color: #6b7280 !important;
+    border-bottom: 2px solid #e5e7eb !important;
+    background: #f9fafb !important;
+}
+
+.data-table td {
+    padding: 10px 14px !important;
+    font-size: 14px !important;
+    border-bottom: 1px solid #f3f4f6 !important;
+    color: #374151 !important;
+}
+
+.empty-row td {
+    text-align: center !important;
+    color: #9ca3af !important;
+    padding: 32px 14px !important;
+    font-style: italic !important;
+}
+
+/* ============================================================
+   Toast Notifications
+   ============================================================ */
+.toast-container {
+    position: fixed !important;
+    top: 20px !important;
+    right: 20px !important;
+    z-index: 9999 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+}
+
+.toast {
+    padding: 12px 20px !important;
+    border-radius: 8px !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+    opacity: 0 !important;
+    transform: translateX(20px) !important;
+    transition: all 0.3s ease !important;
+    max-width: 400px !important;
+    font-family: 'Inter', sans-serif !important;
+}
+
+.toast-show {
+    opacity: 1 !important;
+    transform: translateX(0) !important;
+}
+
+.toast-success {
+    background: #065f46 !important;
+    color: white !important;
+}
+
+.toast-error {
+    background: #991b1b !important;
+    color: white !important;
+}
+
+.toast-info {
+    background: #1e4f82 !important;
+    color: white !important;
+}

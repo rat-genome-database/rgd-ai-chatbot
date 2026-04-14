@@ -16,6 +16,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -132,15 +133,35 @@ public class CurationController {
     public ResponseEntity<?> uploadFile(@RequestParam("file") MultipartFile file) {
         LOG.info("Curation upload: {}", file.getOriginalFilename());
 
+        // Resolve display name from embedded comment if present
+        String resolvedName = file.getOriginalFilename();
+        try {
+            String rawContent = new String(file.getBytes(), StandardCharsets.UTF_8);
+            if (rawContent.startsWith("<!-- file_name:")) {
+                int end = rawContent.indexOf("-->");
+                if (end > 0) {
+                    String displayName = rawContent.substring("<!-- file_name:".length(), end).trim();
+                    if (!displayName.isEmpty()) {
+                        resolvedName = displayName;
+                    }
+                }
+            }
+        } catch (IOException e) {
+            LOG.warn("Could not read file bytes for display name check: {}", e.getMessage());
+        }
+
         Map<String, Object> result = new HashMap<>();
-        result.put("fileName", file.getOriginalFilename());
+        result.put("fileName", resolvedName);
 
         try {
-            boolean existed = documentEmbeddingDAO.fileExists(file.getOriginalFilename());
+            // Check both the display name and original filename for existing entries
+            boolean existed = documentEmbeddingDAO.fileExists(resolvedName)
+                    || documentEmbeddingDAO.fileExists(file.getOriginalFilename());
 
             if (existed) {
-                int oldChunks = documentEmbeddingDAO.deleteByFileName(file.getOriginalFilename());
-                LOG.info("Deleted {} old chunks for re-upload: {}", oldChunks, file.getOriginalFilename());
+                int oldChunks = documentEmbeddingDAO.deleteByFileName(resolvedName);
+                oldChunks += documentEmbeddingDAO.deleteByFileName(file.getOriginalFilename());
+                LOG.info("Deleted {} old chunks for re-upload: {}", oldChunks, resolvedName);
             }
 
             int chunkCount = processFile(file);
@@ -170,10 +191,25 @@ public class CurationController {
         }
 
         try {
+            // Check for embedded display name: <!-- file_name: ... -->
+            String fileName = file.getOriginalFilename();
+            String rawContent = Files.readString(destinationFile, StandardCharsets.UTF_8);
+            if (rawContent.startsWith("<!-- file_name:")) {
+                int end = rawContent.indexOf("-->");
+                if (end > 0) {
+                    String displayName = rawContent.substring("<!-- file_name:".length(), end).trim();
+                    if (!displayName.isEmpty()) {
+                        fileName = displayName;
+                        LOG.info("Using embedded display name: {}", fileName);
+                    }
+                }
+            }
+
             TikaDocumentReader documentReader = new TikaDocumentReader(destinationFile.toUri().toString());
             List<Document> documents = documentReader.get();
-            documents.forEach(doc -> doc.getMetadata().put("filename", file.getOriginalFilename()));
-            LOG.info("Read document with {} characters", documents.get(0).getContent().length());
+            String finalFileName = fileName;
+            documents.forEach(doc -> doc.getMetadata().put("filename", finalFileName));
+            LOG.info("Read document with {} characters, file_name: {}", documents.get(0).getContent().length(), fileName);
 
             List<Document> preprocessedDocs = preprocessor.preprocessDocuments(documents);
             LOG.info("Preprocessed into {} clean documents", preprocessedDocs.size());

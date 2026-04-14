@@ -17,6 +17,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -51,13 +52,30 @@ public class UploadControllerOpenAI {
             LOG.info("File saved to: {}", destinationFile);
         }
 
+        // Check for embedded display name: <!-- file_name: ... -->
+        // RGD report converter embeds this for proper DB storage (preserves /, full names, etc.)
+        // Non-report files won't have this, so we fall back to the original filename
+        String fileName = file.getOriginalFilename();
+        String rawContent = Files.readString(destinationFile, StandardCharsets.UTF_8);
+        if (rawContent.startsWith("<!-- file_name:")) {
+            int end = rawContent.indexOf("-->");
+            if (end > 0) {
+                String displayName = rawContent.substring("<!-- file_name:".length(), end).trim();
+                if (!displayName.isEmpty()) {
+                    fileName = displayName;
+                    LOG.info("Using embedded display name: {}", fileName);
+                }
+            }
+        }
+
         // Read document
         TikaDocumentReader documentReader = new TikaDocumentReader(destinationFile.toUri().toString());
         List<Document> documents = documentReader.get();
+        String finalFileName = fileName;
         documents.forEach(doc -> {
-            doc.getMetadata().put("filename", file.getOriginalFilename());
+            doc.getMetadata().put("filename", finalFileName);
         });
-        LOG.info("Read document with {} characters", documents.get(0).getContent().length());
+        LOG.info("Read document with {} characters, file_name: {}", documents.get(0).getContent().length(), fileName);
 
         // STEP 1: Universal preprocessing for ANY document type
         List<Document> preprocessedDocs = preprocessor.preprocessDocuments(documents);

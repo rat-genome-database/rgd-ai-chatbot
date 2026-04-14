@@ -28,10 +28,6 @@
     <meta name="description" content="<%=pageDescription%>" />
     <% } %>
 
-    <%=headContent%>
-
-
-
     <title><%=pageTitle%></title>
 
     <link rel="stylesheet" href="<%= rgdBase %>/rgdweb/css/jquery/jquery-ui-1.8.18.custom.css">
@@ -98,6 +94,8 @@
 
     <script type="text/javascript" src="<%= rgdBase %>/rgdweb/js/elasticsearch/elasticsearchcommon.js"></script>
     <script src="https://accounts.google.com/gsi/client" async></script>
+
+    <%=headContent%>
 
 </head>
 

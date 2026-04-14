@@ -50,23 +50,34 @@ const convertNCTToLinks = (text) => {
     });
 };
 
-// Function to convert [[filename.md]] markers to clickable PDF links
+// Function to convert [[filename]] markers to clickable links
 const convertMdToLinks = (text) => {
-    // Pattern to match [[filename.md]] markers from backend
-    // Supports filenames with spaces, parentheses, hyphens, etc.
-    const mdPattern = /\[\[([^\]]+\.md)\]\]/g;
+    // Pattern to match [[...]] markers from backend (with or without .md extension)
+    const pattern = /\[\[([^\]]+)\]\]/g;
 
-    return text.replace(mdPattern, (match, filename) => {
-        // Trim leading/trailing spaces from filename
+    return text.replace(pattern, (match, filename) => {
         filename = filename.trim();
-        // Remove .md extension and add .pdf
-        const baseFilename = filename.slice(0, -3); // Remove '.md'
-        const pdfFilename = baseFilename + '.pdf';
 
-        // URL encode the filename to handle spaces and special characters
+        // Check if this is an RGD report: "RGD <Type> Report - <Name> (<RGD_ID>)"
+        const rgdPattern = /^RGD\s+(\w+)\s+Report\s+-\s+(.+?)\s+\((\d+)\)$/;
+        const rgdMatch = filename.match(rgdPattern);
+
+        if (rgdMatch) {
+            const type = rgdMatch[1].toLowerCase(); // gene, qtl, strain, etc.
+            const name = rgdMatch[2];
+            const rgdId = rgdMatch[3];
+            const url = `https://rgd.mcw.edu/rgdweb/report/${type}/main.html?id=${rgdId}`;
+            return `<a href="${url}" target="_blank">${filename}</a>`;
+        }
+
+        // Non-RGD files: link to uploaded docs (existing behavior)
+        let baseFilename = filename;
+        if (filename.endsWith('.md')) {
+            baseFilename = filename.slice(0, -3);
+        }
+        const pdfFilename = baseFilename + '.pdf';
         const encodedFilename = encodeURIComponent(pdfFilename);
 
-        // Check if running on localhost and redirect to dev server for PDFs
         let basePath;
         if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
             basePath = 'https://dev.rgd.mcw.edu/assistant';
@@ -74,10 +85,7 @@ const convertMdToLinks = (text) => {
             basePath = contextPath;
         }
 
-        // Use basePath for URL
         const url = `${basePath}/docs/${encodedFilename}`;
-
-        // Display the filename without .md extension
         return `<a href="${url}" target="_blank">${baseFilename}</a>`;
     });
 };
@@ -233,10 +241,10 @@ const postQuestionStream = (question) => {
                         try { smd.parser_end(smdParser); } catch (e) { /* safe to ignore */ }
                         try {
                             const payload = JSON.parse(eventData);
-                            // Same order as dev server: marked first, then links
-                            let enhanced = marked.parse(payload.fullResponse);
+                            // Convert [[...]] markers before markdown parsing so they aren't mangled
+                            let preProcessed = convertMdToLinks(payload.fullResponse);
+                            let enhanced = marked.parse(preProcessed);
                             enhanced = convertNCTToLinks(enhanced);
-                            enhanced = convertMdToLinks(enhanced);
                             enhanced = boldSourcesUsed(enhanced);
                             enhanced = cleanupClinicalTrialSources(enhanced);
                             streamSpan.innerHTML = enhanced;

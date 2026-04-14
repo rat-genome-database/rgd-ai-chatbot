@@ -20,7 +20,7 @@ public class DocumentPreprocessor {
     private static final Pattern MULTIPLE_NEWLINES = Pattern.compile("\n{3,}");
     private static final Pattern MARKDOWN_LINKS = Pattern.compile("\\[([^\\]]+)\\]\\([^\\)]+\\)");
     private static final Pattern PAGE_REFERENCES = Pattern.compile("(?i)(page\\s+\\d+|\\d+\\s*$)");
-    private static final Pattern FOOTNOTE_REFS = Pattern.compile("\\[\\d+\\]");
+    private static final Pattern FOOTNOTE_REFS = Pattern.compile("\\[\\d+\\](?!\\()");
 
 
     public List<Document> preprocessDocuments(List<Document> documents) {
@@ -59,11 +59,11 @@ public class DocumentPreprocessor {
         // Step 1: Remove HTML/XML tags (from web content, exported docs, etc.)
         cleaned = HTML_TAGS.matcher(cleaned).replaceAll("");
 
-        // Step 2: Convert markdown links to readable text [text](url) -> text
-        cleaned = MARKDOWN_LINKS.matcher(cleaned).replaceAll("$1");
+        // Step 2: Keep markdown links intact for RAG source attribution
+        // Previously stripped [text](url) -> text, losing all hyperlinks
 
-        // Step 3: Extract content from tables instead of removing them
-        cleaned = extractTableContent(cleaned);
+        // Step 3: Keep table structure intact for LLM comprehension
+        // Previously flattened tables, losing key-value relationships and numeric values
 
         // Step 4: Remove footnote references [1], [2], etc.
         cleaned = FOOTNOTE_REFS.matcher(cleaned).replaceAll("");
@@ -124,9 +124,8 @@ public class DocumentPreprocessor {
         for (String cell : cells) {
             String trimmed = cell.trim();
 
-            // Skip empty cells, numbers only, or cells with just formatting
+            // Skip empty cells or cells with just formatting
             if (!trimmed.isEmpty() &&
-                    !trimmed.matches("\\d+") && // Skip pure numbers like "1", "2", "3"
                     !trimmed.matches("[\\s\\-_=\\*]+") && // Skip formatting chars
                     trimmed.length() > 1) {
 
@@ -185,7 +184,7 @@ public class DocumentPreprocessor {
         String[] words = trimmed.split("\\s+");
         long meaningfulWords = 0;
         for (String word : words) {
-            if (word.length() > 1 && !word.matches("\\d+") && !word.matches("[\\p{Punct}]+")) {
+            if (word.length() > 1 && !word.matches("[\\p{Punct}]+")) {
                 meaningfulWords++;
             }
         }
