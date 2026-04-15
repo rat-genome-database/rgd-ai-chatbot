@@ -14,7 +14,7 @@ public class DocumentEmbeddingOpenAI {
     private Long id;
 
     @Type(PGvectorType.class)
-    @Column(name = "embedding", columnDefinition = "vector(3072)")
+    @Column(name = "embedding", columnDefinition = "vector(1536)")
     private PGvector embedding;
 
     @Column(columnDefinition = "text")
