@@ -244,13 +244,23 @@ public class ReportLoaderService {
         return resp;
     }
 
-    public java.util.Map<String, Object> getProgress(String reportType, int speciesKey) throws Exception {
+    public java.util.Map<String, Object> getProgress(String reportType, int speciesKey, int mapKey) throws Exception {
         ReportLoadStatusDAO statusDAO = new ReportLoadStatusDAO();
-        int total = statusDAO.getTotalCount(reportType, speciesKey);
-        int completed = statusDAO.getCountByStatus(reportType, speciesKey, "completed");
-        int failed = statusDAO.getCountByStatus(reportType, speciesKey, "failed");
-        int pending = statusDAO.getCountByStatus(reportType, speciesKey, "pending");
-        int processing = statusDAO.getCountByStatus(reportType, speciesKey, "processing");
+        int total, completed, failed, pending, processing;
+
+        if (mapKey > 0) {
+            total = statusDAO.getTotalCountByMapKey(reportType, speciesKey, mapKey);
+            completed = statusDAO.getCountByStatusAndMapKey(reportType, speciesKey, mapKey, "completed");
+            failed = statusDAO.getCountByStatusAndMapKey(reportType, speciesKey, mapKey, "failed");
+            pending = statusDAO.getCountByStatusAndMapKey(reportType, speciesKey, mapKey, "pending");
+            processing = statusDAO.getCountByStatusAndMapKey(reportType, speciesKey, mapKey, "processing");
+        } else {
+            total = statusDAO.getTotalCount(reportType, speciesKey);
+            completed = statusDAO.getCountByStatus(reportType, speciesKey, "completed");
+            failed = statusDAO.getCountByStatus(reportType, speciesKey, "failed");
+            pending = statusDAO.getCountByStatus(reportType, speciesKey, "pending");
+            processing = statusDAO.getCountByStatus(reportType, speciesKey, "processing");
+        }
 
         java.util.Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("total", total);
@@ -288,6 +298,23 @@ public class ReportLoaderService {
     @Async
     public void processBatchAsync(String reportType, int speciesKey, int mapKey, boolean reset) {
         LOG.info("Batch async started: type={} species={} mapKey={} reset={}", reportType, speciesKey, mapKey, reset);
+
+        // Resolve assembly name for subdirectory (empty for types without assembly or "All")
+        String assemblyName = "";
+        if (mapKey > 0) {
+            try {
+                ChatbotDAOs.Map mapDao = new ChatbotDAOs.Map(oracleDs());
+                for (edu.mcw.rgd.datamodel.Map m : mapDao.getMaps(speciesKey)) {
+                    if (m.getKey() == mapKey) {
+                        assemblyName = m.getName().replaceAll("[^a-zA-Z0-9_.-]", "_");
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                LOG.warn("Could not resolve assembly name for mapKey={}, using mapKey as folder", mapKey);
+                assemblyName = String.valueOf(mapKey);
+            }
+        }
 
         ReportLoadStatusDAO statusDAO = new ReportLoadStatusDAO();
         try {
@@ -331,9 +358,12 @@ public class ReportLoaderService {
                 LOG.info("Resume mode — skipping Oracle fetch, using existing pending/processing records");
             }
 
-            // Phase 4: Process pending records in parallel
-            List<ReportLoadStatus> pendingList = statusDAO.getPendingByTypeAndSpecies(reportType, speciesKey);
-            LOG.info("Processing {} pending records with {} threads", pendingList.size(), threadCount);
+            // Phase 4: Process pending records in parallel (filter by mapKey if specific assembly)
+            List<ReportLoadStatus> pendingList = (mapKey > 0)
+                    ? statusDAO.getPendingByTypeSpeciesAndMapKey(reportType, speciesKey, mapKey)
+                    : statusDAO.getPendingByTypeAndSpecies(reportType, speciesKey);
+            LOG.info("Processing {} pending records (mapKey={}) with {} threads",
+                    pendingList.size(), mapKey, threadCount);
 
             ExecutorService pool = Executors.newFixedThreadPool(threadCount);
             for (ReportLoadStatus r : pendingList) {
@@ -341,7 +371,8 @@ public class ReportLoaderService {
                     LOG.info("Batch paused — stopping submission at rgdId={}", r.getRgdId());
                     break;
                 }
-                pool.submit(() -> processOneRecord(r, reportType, statusDAO));
+                String asmName = assemblyName; // effectively final for lambda
+                pool.submit(() -> processOneRecord(r, reportType, asmName, statusDAO));
             }
             pool.shutdown();
             try {
@@ -362,7 +393,7 @@ public class ReportLoaderService {
     // Per-record processing (called from thread pool)
     // ============================================================
 
-    private void processOneRecord(ReportLoadStatus r, String reportType, ReportLoadStatusDAO statusDAO) {
+    private void processOneRecord(ReportLoadStatus r, String reportType, String assemblyName, ReportLoadStatusDAO statusDAO) {
         if (cancelled.get()) return;
 
         String symbol = r.getSymbol() == null ? String.valueOf(r.getRgdId()) : r.getSymbol();
@@ -374,8 +405,8 @@ public class ReportLoaderService {
             String url = buildUrl(reportType, r.getRgdId());
             String html = converter.fetchHtml(url);
             ReportConverterService.ConversionResult result = converter.convert(html, url);
-            saveHtml(result, reportType);
-            String fileName = saveMarkdown(result, reportType);
+            saveHtml(result, reportType, assemblyName);
+            String fileName = saveMarkdown(result, reportType, assemblyName);
 
             statusDAO.updateStatus(r.getReportLoadStatusId(), "completed", fileName, null);
         } catch (Exception e) {
@@ -415,7 +446,7 @@ public class ReportLoaderService {
         return baseUrl + path + "?id=" + rgdId;
     }
 
-    private String saveMarkdown(ReportConverterService.ConversionResult result, String reportType) throws Exception {
+    private String saveMarkdown(ReportConverterService.ConversionResult result, String reportType, String assemblyName) throws Exception {
         String safeSymbol = (result.metadata.entityName == null || result.metadata.entityName.isEmpty()
                 ? "unknown" : result.metadata.entityName).replaceAll("[^a-zA-Z0-9_.-]", "_");
         String rgdId = (result.metadata.rgdId == null || result.metadata.rgdId.isEmpty())
@@ -423,12 +454,13 @@ public class ReportLoaderService {
         String fileName = reportType + "_" + safeSymbol + "_" + rgdId + ".md";
 
         Path typeDir = Paths.get(outputDir, reportType);
+        if (!assemblyName.isEmpty()) typeDir = typeDir.resolve(assemblyName);
         Files.createDirectories(typeDir);
         Files.writeString(typeDir.resolve(fileName), result.markdown);
         return fileName;
     }
 
-    private void saveHtml(ReportConverterService.ConversionResult result, String reportType) throws Exception {
+    private void saveHtml(ReportConverterService.ConversionResult result, String reportType, String assemblyName) throws Exception {
         String safeSymbol = (result.metadata.entityName == null || result.metadata.entityName.isEmpty()
                 ? "unknown" : result.metadata.entityName).replaceAll("[^a-zA-Z0-9_.-]", "_");
         String rgdId = (result.metadata.rgdId == null || result.metadata.rgdId.isEmpty())
@@ -436,6 +468,7 @@ public class ReportLoaderService {
         String fileName = reportType + "_" + safeSymbol + "_" + rgdId + ".html";
 
         Path htmlDir = Paths.get(outputDir).getParent().resolve("html").resolve(reportType);
+        if (!assemblyName.isEmpty()) htmlDir = htmlDir.resolve(assemblyName);
         Files.createDirectories(htmlDir);
         Files.writeString(htmlDir.resolve(fileName), result.processedHtml);
     }

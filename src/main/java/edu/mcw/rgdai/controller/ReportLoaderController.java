@@ -155,9 +155,10 @@ public class ReportLoaderController {
 
     @GetMapping("/bulk/progress")
     public ResponseEntity<?> bulkProgress(@RequestParam("type") String type,
-                                          @RequestParam(value = "species", defaultValue = "0") int speciesKey) {
+                                          @RequestParam(value = "species", defaultValue = "0") int speciesKey,
+                                          @RequestParam(value = "mapKey", defaultValue = "0") int mapKey) {
         try {
-            return ResponseEntity.ok(loaderService.getProgress(type, speciesKey));
+            return ResponseEntity.ok(loaderService.getProgress(type, speciesKey, mapKey));
         } catch (Exception e) {
             LOG.error("bulkProgress() failed", e);
             return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));

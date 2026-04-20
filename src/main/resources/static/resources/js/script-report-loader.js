@@ -7,6 +7,7 @@ var progressTimer = null;
 // Active batch params (from DB check on page load or from startBulk)
 var activeBatchType = null;
 var activeBatchSpecies = null;
+var activeBatchMapKey = null;
 
 // Report types that don't have a species filter
 var NO_SPECIES = ['strain', 'reference', 'project'];
@@ -229,6 +230,7 @@ function startBulk() {
 
     activeBatchType = type;
     activeBatchSpecies = String(speciesKey);
+    activeBatchMapKey = String(mapKey);
 
     fetch(contextPath + '/report-loader/bulk/start', {
         method: 'POST',
@@ -247,6 +249,7 @@ function startBulk() {
             btn.disabled = false;
             activeBatchType = null;
             activeBatchSpecies = null;
+            activeBatchMapKey = null;
             return;
         }
         document.getElementById('bulkProgressSection').style.display = 'block';
@@ -259,6 +262,7 @@ function startBulk() {
         btn.disabled = false;
         activeBatchType = null;
         activeBatchSpecies = null;
+        activeBatchMapKey = null;
         showError('Start failed: ' + e.message);
     });
 }
@@ -277,6 +281,7 @@ function resumeBulk() {
 
     activeBatchType = type;
     activeBatchSpecies = String(speciesKey);
+    activeBatchMapKey = String(mapKey);
 
     fetch(contextPath + '/report-loader/bulk/start', {
         method: 'POST',
@@ -339,9 +344,11 @@ function stopProgressPolling() {
 function pollProgress() {
     var type = activeBatchType || document.getElementById('reportType').value;
     var speciesKey = activeBatchSpecies || document.getElementById('speciesSelect').value || '0';
+    var mapKey = activeBatchMapKey || document.getElementById('assemblySelect').value || '0';
 
     fetch(contextPath + '/report-loader/bulk/progress?type=' + encodeURIComponent(type)
-        + '&species=' + encodeURIComponent(speciesKey))
+        + '&species=' + encodeURIComponent(speciesKey)
+        + '&mapKey=' + encodeURIComponent(mapKey))
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (d.error) return;
@@ -372,6 +379,7 @@ function pollProgress() {
                     document.getElementById('resetCheckbox').onchange = null;
                     activeBatchType = null;
                     activeBatchSpecies = null;
+                    activeBatchMapKey = null;
                     showToast('Bulk load finished (' + formatNumber(d.completed) + ' completed, '
                         + formatNumber(d.failed) + ' failed)', 'success');
                 }
@@ -448,6 +456,7 @@ function checkActiveBatch() {
 
             activeBatchType = data.reportType;
             activeBatchSpecies = String(data.speciesKey);
+            activeBatchMapKey = String(data.mapKey || 0);
 
             // Set report type dropdown
             document.getElementById('reportType').value = data.reportType;
