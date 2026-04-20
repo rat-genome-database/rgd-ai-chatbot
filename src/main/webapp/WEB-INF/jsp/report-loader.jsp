@@ -39,23 +39,24 @@
                     <option value="strain">Strain</option>
                     <option value="marker">Marker</option>
                     <option value="reference">Reference</option>
+                    <option value="project">Project</option>
                     <option value="other">Other</option>
                 </select>
             </div>
             <div class="select-group" id="speciesGroup">
                 <label>Species</label>
-                <select id="speciesSelect" disabled>
-                    <option value="">Coming in Phase 2...</option>
+                <select id="speciesSelect">
+                    <option value="">Select...</option>
                 </select>
             </div>
             <div class="select-group" id="assemblyGroup">
                 <label>Assembly</label>
-                <select id="assemblySelect" disabled>
-                    <option value="">Coming in Phase 2...</option>
+                <select id="assemblySelect">
+                    <option value="">Select species first</option>
                 </select>
             </div>
             <div class="count-display" id="countDisplay" style="display:none;">
-                <span id="countValue">0</span> <span id="countLabel">genes</span>
+                <span id="countValue">0</span> <span id="countLabel">records</span>
             </div>
         </div>
 
@@ -68,7 +69,11 @@
             </button>
         </div>
         <div class="bulk-row" id="bulkRow">
-            <button class="action-btn bulk-btn" id="bulkStartBtn" disabled title="Coming in Phase 2">
+            <label class="reset-checkbox">
+                <input type="checkbox" id="resetCheckbox" />
+                <span>Start Fresh (delete existing records for this selection)</span>
+            </label>
+            <button class="action-btn bulk-btn" id="bulkStartBtn">
                 <i class="fas fa-play"></i> Start Bulk
             </button>
         </div>
@@ -85,13 +90,11 @@
         </div>
     </div>
 
-    <!-- Bulk Progress Section (placeholder for Phase 2) -->
+    <!-- Bulk Progress Section -->
     <div class="section-card" id="bulkProgressSection" style="display:none;">
         <h3 class="section-title"><i class="fas fa-tasks"></i> Bulk Load Progress</h3>
         <div class="bulk-controls">
-            <button class="action-btn" id="bulkPauseBtn"><i class="fas fa-pause"></i> Pause</button>
-            <button class="action-btn" id="bulkResumeBtn" style="display:none;"><i class="fas fa-play"></i> Resume</button>
-            <button class="action-btn danger-btn" id="bulkCancelBtn"><i class="fas fa-stop"></i> Cancel</button>
+            <button class="action-btn danger-btn" id="bulkCancelBtn"><i class="fas fa-pause"></i> Pause</button>
         </div>
         <div class="progress-stats">
             <span class="stat-pill stat-total">Total: <strong id="progTotal">0</strong></span>

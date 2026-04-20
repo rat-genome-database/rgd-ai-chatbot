@@ -141,7 +141,7 @@
 }
 
 .select-group {
-    display: flex !important;
+    display: flex;
     flex-direction: column !important;
     gap: 4px !important;
     min-width: 160px !important;
@@ -184,6 +184,42 @@
     font-weight: 600 !important;
     font-size: 14px !important;
     white-space: nowrap !important;
+    gap: 4px !important;
+    align-items: center !important;
+}
+
+/* ============================================================
+   Bulk Row (Start Fresh checkbox + Start Bulk button)
+   ============================================================ */
+.bulk-row {
+    display: flex !important;
+    align-items: center !important;
+    gap: 20px !important;
+    flex-wrap: wrap !important;
+    margin-bottom: 16px !important;
+}
+
+.reset-checkbox {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    font-size: 13px !important;
+    color: #374151 !important;
+    cursor: pointer !important;
+    user-select: none !important;
+    margin: 0 !important;
+}
+
+.reset-checkbox input[type="checkbox"] {
+    width: 16px !important;
+    height: 16px !important;
+    margin: 0 !important;
+    cursor: pointer !important;
+    flex-shrink: 0 !important;
+}
+
+.reset-checkbox span {
+    line-height: 1.4 !important;
 }
 
 /* ============================================================

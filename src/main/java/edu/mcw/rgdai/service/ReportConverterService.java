@@ -183,6 +183,18 @@ public class ReportConverterService {
         // 6. Convert section headings
         convertSectionHeadings(doc, content);
 
+        // 6b. Convert GO sub-headings (Biological Process, Cellular Component, etc.)
+        // HTML: <span class="highlight"><u>Text</u></span> → plain text after span stripping.
+        // Fix: convert to <h4> so they become proper markdown headings.
+        for (Element highlightSpan : content.select("span.highlight")) {
+            Element u = highlightSpan.selectFirst("u");
+            if (u != null && !u.text().trim().isEmpty()) {
+                Element h4 = doc.createElement("h4");
+                h4.text(u.text().trim());
+                highlightSpan.replaceWith(h4);
+            }
+        }
+
         // 7. Neutralize layout tables
         neutralizeLayoutTables(content);
         LOG.info("Pipeline [neutralizeTables]: {} children, {} text chars",
@@ -194,6 +206,11 @@ public class ReportConverterService {
         flattenNestedTables(content);
         LOG.info("Pipeline [flattenNested]: {} children, {} text chars",
                 content.children().size(), content.text().length());
+
+        // 8b. Merge two-row table headers (rowspan/colspan → single row).
+        // Extracted data tables (e.g. Comparative Map) often have multi-row headers
+        // that Flexmark can't handle, producing duplicate header rows.
+        mergeMultiRowHeaders(content);
 
         // 9. Remove br tags
         content.select("br").remove();
@@ -967,16 +984,47 @@ public class ReportConverterService {
             }
 
             int extracted = 0, flattened = 0;
+            // Track insertion point per parent table to maintain document order
+            Map<Element, Element> insertionPoints = new HashMap<>();
+            Set<Element> rowsToRemove = new HashSet<>();
             for (Element nt : nestedTables) {
                 if (!nt.select("th").isEmpty()) {
                     // Data sub-table (has <th> headers): extract to after parent table.
-                    // Use parent().closest("table") to find enclosing table (not self).
+                    // Also grab the label text from sibling <td> in the same row
+                    // (e.g. species name in Comparative Map, "Position:" in Reference Sequences).
                     Element parentCell = (Element) nt.parent();
+                    Element parentRow = parentCell.parent();
                     Element parentTable = parentCell.closest("table");
                     if (parentTable != null) {
+                        String labelText = "";
+                        if (parentRow != null) {
+                            for (Element sibling : parentRow.children()) {
+                                if (!sibling.equals(parentCell) && !sibling.text().trim().isEmpty()) {
+                                    labelText = sibling.text().trim();
+                                    break;
+                                }
+                            }
+                        }
+
                         nt.remove();
-                        parentTable.after(nt);
+                        Element insertAfter = insertionPoints.getOrDefault(parentTable, parentTable);
+
+                        if (!labelText.isEmpty()) {
+                            Element label = new Element("h4");
+                            label.html("<b>" + labelText + "</b>");
+                            insertAfter.after(label);
+                            label.after(nt);
+                        } else {
+                            insertAfter.after(nt);
+                        }
+                        insertionPoints.put(parentTable, nt);
                         extracted++;
+
+                        // Mark parent row for removal — its label is now in the h4,
+                        // and the nested table was extracted, leaving an empty row
+                        if (parentRow != null && !labelText.isEmpty()) {
+                            rowsToRemove.add(parentRow);
+                        }
                     }
                 } else {
                     // Simple layout sub-table: flatten to inline text
@@ -999,8 +1047,79 @@ public class ReportConverterService {
                     flattened++;
                 }
             }
-            LOG.info("Pipeline [flattenNested] pass {}: extracted {} data tables, flattened {} layout tables",
-                    pass, extracted, flattened);
+            // Remove emptied rows that held nested tables + labels
+            for (Element row : rowsToRemove) {
+                row.remove();
+            }
+            LOG.info("Pipeline [flattenNested] pass {}: extracted {} data tables, flattened {} layout tables, removed {} label rows",
+                    pass, extracted, flattened, rowsToRemove.size());
+        }
+    }
+
+    /**
+     * Merge two-row table headers (rowspan/colspan) into a single row.
+     * HTML pattern: first row has th(rowspan=2) + th(colspan=N), second row has N individual th.
+     * Flexmark can't render multi-row headers, producing duplicate rows.
+     * Fix: replace colspan cell with individual sub-cells from second row, remove second row.
+     */
+    void mergeMultiRowHeaders(Element content) {
+        int merged = 0;
+        for (Element table : content.select("table")) {
+            // Find first two consecutive header rows (both must have <th> cells)
+            Elements headerRows = table.select("> thead > tr");
+            if (headerRows.size() < 2) {
+                headerRows = new Elements();
+                for (Element tr : table.select("> tbody > tr, > tr")) {
+                    if (!tr.select("> th").isEmpty()) {
+                        headerRows.add(tr);
+                        if (headerRows.size() == 2) break;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            if (headerRows.size() < 2) continue;
+
+            Element firstRow = headerRows.get(0);
+            Element secondRow = headerRows.get(1);
+
+            // First row must have at least one th with colspan > 1
+            boolean hasColspan = false;
+            for (Element th : firstRow.select("> th")) {
+                String cs = th.attr("colspan");
+                if (!cs.isEmpty()) {
+                    try { if (Integer.parseInt(cs) > 1) { hasColspan = true; break; } }
+                    catch (NumberFormatException ignored) {}
+                }
+            }
+            if (!hasColspan) continue;
+
+            // Merge: replace colspan cells with sub-cells, keep rowspan cells
+            Elements subCells = secondRow.select("> th");
+            int subIdx = 0;
+            for (Element th : new ArrayList<>(firstRow.select("> th"))) {
+                int colspan = 1;
+                String cs = th.attr("colspan");
+                if (!cs.isEmpty()) {
+                    try { colspan = Integer.parseInt(cs); } catch (NumberFormatException ignored) {}
+                }
+                if (colspan > 1) {
+                    for (int i = 0; i < colspan && subIdx < subCells.size(); i++) {
+                        Element sub = subCells.get(subIdx++).clone();
+                        sub.removeAttr("colspan");
+                        sub.removeAttr("rowspan");
+                        th.before(sub);
+                    }
+                    th.remove();
+                } else {
+                    th.removeAttr("rowspan");
+                }
+            }
+            secondRow.remove();
+            merged++;
+        }
+        if (merged > 0) {
+            LOG.info("Pipeline [mergeMultiRowHeaders]: merged {} tables", merged);
         }
     }
 

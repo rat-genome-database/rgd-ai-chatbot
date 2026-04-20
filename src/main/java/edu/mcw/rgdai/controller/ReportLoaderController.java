@@ -1,6 +1,7 @@
 package edu.mcw.rgdai.controller;
 
 import edu.mcw.rgdai.service.ReportConverterService;
+import edu.mcw.rgdai.service.ReportLoaderService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -19,14 +21,20 @@ public class ReportLoaderController {
 
     private static final Logger LOG = LoggerFactory.getLogger(ReportLoaderController.class);
     private final ReportConverterService converterService;
+    private final ReportLoaderService loaderService;
 
     @Value("${report.loader.output-dir}")
     private String outputDir;
 
-    public ReportLoaderController(ReportConverterService converterService) {
+    public ReportLoaderController(ReportConverterService converterService,
+                                  ReportLoaderService loaderService) {
         this.converterService = converterService;
+        this.loaderService = loaderService;
     }
 
+    // ============================================================
+    // Single URL convert (unchanged)
+    // ============================================================
     @PostMapping("/convert")
     public ResponseEntity<?> convertUrl(@RequestBody Map<String, String> request) {
         try {
@@ -79,6 +87,89 @@ public class ReportLoaderController {
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             LOG.error("Error converting URL", e);
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // ============================================================
+    // Bulk loader endpoints
+    // ============================================================
+
+    @GetMapping("/species")
+    public ResponseEntity<?> species(@RequestParam("type") String type) {
+        try {
+            List<Map<String, Object>> list = loaderService.getSpecies(type);
+            return ResponseEntity.ok(list);
+        } catch (Exception e) {
+            LOG.error("species() failed", e);
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/assemblies")
+    public ResponseEntity<?> assemblies(@RequestParam("species") int speciesKey) {
+        try {
+            List<Map<String, Object>> list = loaderService.getAssemblies(speciesKey);
+            return ResponseEntity.ok(list);
+        } catch (Exception e) {
+            LOG.error("assemblies() failed", e);
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/count")
+    public ResponseEntity<?> count(@RequestParam("type") String type,
+                                   @RequestParam(value = "species", defaultValue = "0") int speciesKey,
+                                   @RequestParam(value = "mapKey", defaultValue = "0") int mapKey) {
+        try {
+            int count = loaderService.countReports(type, speciesKey, mapKey);
+            return ResponseEntity.ok(Map.of("count", count));
+        } catch (Exception e) {
+            LOG.error("count() failed", e);
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/bulk/start")
+    public ResponseEntity<?> bulkStart(@RequestBody Map<String, Object> body) {
+        try {
+            String type = (String) body.get("reportType");
+            int speciesKey = body.get("speciesKey") == null ? 0 : ((Number) body.get("speciesKey")).intValue();
+            int mapKey = body.get("mapKey") == null ? 0 : ((Number) body.get("mapKey")).intValue();
+            boolean reset = Boolean.TRUE.equals(body.get("reset"));
+
+            Map<String, Object> resp = loaderService.startBatch(type, speciesKey, mapKey, reset);
+            return ResponseEntity.ok(resp);
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            LOG.error("bulkStart() failed", e);
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/bulk/cancel")
+    public ResponseEntity<?> bulkCancel() {
+        return ResponseEntity.ok(loaderService.cancel());
+    }
+
+    @GetMapping("/bulk/progress")
+    public ResponseEntity<?> bulkProgress(@RequestParam("type") String type,
+                                          @RequestParam(value = "species", defaultValue = "0") int speciesKey) {
+        try {
+            return ResponseEntity.ok(loaderService.getProgress(type, speciesKey));
+        } catch (Exception e) {
+            LOG.error("bulkProgress() failed", e);
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/bulk/active")
+    public ResponseEntity<?> bulkActive() {
+        try {
+            return ResponseEntity.ok(loaderService.getActiveBatch());
+        } catch (Exception e) {
+            LOG.error("bulkActive() failed", e);
             return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
         }
     }
