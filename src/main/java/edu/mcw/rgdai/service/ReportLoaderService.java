@@ -374,6 +374,7 @@ public class ReportLoaderService {
             String url = buildUrl(reportType, r.getRgdId());
             String html = converter.fetchHtml(url);
             ReportConverterService.ConversionResult result = converter.convert(html, url);
+            saveHtml(result, reportType);
             String fileName = saveMarkdown(result, reportType);
 
             statusDAO.updateStatus(r.getReportLoadStatusId(), "completed", fileName, null);
@@ -425,5 +426,17 @@ public class ReportLoaderService {
         Files.createDirectories(typeDir);
         Files.writeString(typeDir.resolve(fileName), result.markdown);
         return fileName;
+    }
+
+    private void saveHtml(ReportConverterService.ConversionResult result, String reportType) throws Exception {
+        String safeSymbol = (result.metadata.entityName == null || result.metadata.entityName.isEmpty()
+                ? "unknown" : result.metadata.entityName).replaceAll("[^a-zA-Z0-9_.-]", "_");
+        String rgdId = (result.metadata.rgdId == null || result.metadata.rgdId.isEmpty())
+                ? "noid" : result.metadata.rgdId;
+        String fileName = reportType + "_" + safeSymbol + "_" + rgdId + ".html";
+
+        Path htmlDir = Paths.get(outputDir).getParent().resolve("html").resolve(reportType);
+        Files.createDirectories(htmlDir);
+        Files.writeString(htmlDir.resolve(fileName), result.processedHtml);
     }
 }
