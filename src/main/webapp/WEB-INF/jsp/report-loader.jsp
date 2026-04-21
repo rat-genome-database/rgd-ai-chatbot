@@ -94,7 +94,8 @@
     <div class="section-card" id="bulkProgressSection" style="display:none;">
         <h3 class="section-title"><i class="fas fa-tasks"></i> Bulk Load Progress</h3>
         <div class="bulk-controls">
-            <button class="action-btn danger-btn" id="bulkCancelBtn"><i class="fas fa-pause"></i> Pause</button>
+            <button class="action-btn danger-btn btn-hidden" id="bulkCancelBtn"><i class="fas fa-pause"></i> Pause</button>
+            <button class="action-btn retry-btn btn-hidden" id="bulkRetryBtn"><i class="fas fa-redo"></i> Retry Failed</button>
         </div>
         <div class="progress-stats">
             <span class="stat-pill stat-total">Total: <strong id="progTotal">0</strong></span>

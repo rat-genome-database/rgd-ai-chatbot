@@ -148,6 +148,23 @@ public class ReportLoaderController {
         }
     }
 
+    @PostMapping("/bulk/retry")
+    public ResponseEntity<?> bulkRetry(@RequestBody Map<String, Object> body) {
+        try {
+            String type = (String) body.get("reportType");
+            int speciesKey = body.get("speciesKey") == null ? 0 : ((Number) body.get("speciesKey")).intValue();
+            int mapKey = body.get("mapKey") == null ? 0 : ((Number) body.get("mapKey")).intValue();
+
+            Map<String, Object> resp = loaderService.retryFailed(type, speciesKey, mapKey);
+            return ResponseEntity.ok(resp);
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            LOG.error("bulkRetry() failed", e);
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+        }
+    }
+
     @PostMapping("/bulk/cancel")
     public ResponseEntity<?> bulkCancel() {
         return ResponseEntity.ok(loaderService.cancel());

@@ -253,7 +253,6 @@ function startBulk() {
             return;
         }
         document.getElementById('bulkProgressSection').style.display = 'block';
-        document.getElementById('bulkCancelBtn').style.display = '';
         setPauseMode();
         showToast('Bulk load started', 'success');
         startProgressPolling();
@@ -306,20 +305,60 @@ function resumeBulk() {
     .catch(function(e) { showError('Resume failed: ' + e.message); });
 }
 
+function retryFailed() {
+    var type = activeBatchType || document.getElementById('reportType').value;
+    var speciesKey = parseInt(activeBatchSpecies || document.getElementById('speciesSelect').value || '0', 10);
+    var mapKey = parseInt(activeBatchMapKey || document.getElementById('assemblySelect').value || '0', 10);
+
+    activeBatchType = type;
+    activeBatchSpecies = String(speciesKey);
+    activeBatchMapKey = String(mapKey);
+
+    document.getElementById('bulkRetryBtn').classList.add('btn-hidden');
+
+    fetch(contextPath + '/report-loader/bulk/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            reportType: type,
+            speciesKey: speciesKey,
+            mapKey: mapKey
+        })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.error) {
+            showError(data.error);
+            document.getElementById('bulkRetryBtn').classList.remove('btn-hidden');
+            return;
+        }
+        setPauseMode();
+        showToast('Retrying ' + formatNumber(data.reset) + ' failed records', 'success');
+        startProgressPolling();
+    })
+    .catch(function(e) {
+        document.getElementById('bulkRetryBtn').classList.remove('btn-hidden');
+        showError('Retry failed: ' + e.message);
+    });
+}
+
 function setPauseMode() {
     var btn = document.getElementById('bulkCancelBtn');
+    btn.classList.remove('btn-hidden', 'bulk-btn');
+    btn.classList.add('danger-btn');
     btn.innerHTML = '<i class="fas fa-pause"></i> Pause';
     btn.onclick = pauseBulk;
-    btn.className = 'action-btn danger-btn';
     document.getElementById('bulkStartBtn').disabled = true;
+    document.getElementById('bulkRetryBtn').classList.add('btn-hidden');
     document.getElementById('resetCheckbox').onchange = null;
 }
 
 function setResumeMode() {
     var btn = document.getElementById('bulkCancelBtn');
+    btn.classList.remove('btn-hidden', 'danger-btn');
+    btn.classList.add('bulk-btn');
     btn.innerHTML = '<i class="fas fa-redo"></i> Resume';
     btn.onclick = resumeBulk;
-    btn.className = 'action-btn bulk-btn';
     // Start Bulk only enabled when Start Fresh is checked
     var reset = document.getElementById('resetCheckbox');
     document.getElementById('bulkStartBtn').disabled = !reset.checked;
@@ -365,23 +404,39 @@ function pollProgress() {
                 ? 'Processing: ' + d.currentSymbol
                 : '';
 
-            if (!d.running) {
+            if (d.running) {
+                // Running — show Pause only
+                setPauseMode();
+            } else {
                 stopProgressPolling();
                 if (d.pending > 0) {
-                    // Paused or interrupted — show Resume
+                    // Paused — show Resume (and Retry if failures exist)
                     setResumeMode();
+                    if (d.failed > 0) {
+                        document.getElementById('bulkRetryBtn').classList.remove('btn-hidden');
+                    } else {
+                        document.getElementById('bulkRetryBtn').classList.add('btn-hidden');
+                    }
                     showToast('Bulk load paused (' + formatNumber(d.completed) + ' completed, '
                         + formatNumber(d.pending) + ' pending)', 'info');
-                } else {
-                    // Finished — show Start Bulk
+                } else if (d.failed > 0) {
+                    // Finished with failures — show only Retry
+                    document.getElementById('bulkCancelBtn').classList.add('btn-hidden');
+                    document.getElementById('bulkRetryBtn').classList.remove('btn-hidden');
                     document.getElementById('bulkStartBtn').disabled = false;
-                    document.getElementById('bulkCancelBtn').style.display = 'none';
+                    document.getElementById('resetCheckbox').onchange = null;
+                    showToast('Bulk load finished with ' + formatNumber(d.failed) + ' failures ('
+                        + formatNumber(d.completed) + ' completed)', 'warning');
+                } else {
+                    // Finished — all done
+                    document.getElementById('bulkCancelBtn').classList.add('btn-hidden');
+                    document.getElementById('bulkRetryBtn').classList.add('btn-hidden');
+                    document.getElementById('bulkStartBtn').disabled = false;
                     document.getElementById('resetCheckbox').onchange = null;
                     activeBatchType = null;
                     activeBatchSpecies = null;
                     activeBatchMapKey = null;
-                    showToast('Bulk load finished (' + formatNumber(d.completed) + ' completed, '
-                        + formatNumber(d.failed) + ' failed)', 'success');
+                    showToast('Bulk load finished (' + formatNumber(d.completed) + ' completed)', 'success');
                 }
             }
         })
@@ -511,13 +566,11 @@ function checkActiveBatch() {
 
             // Show progress section
             document.getElementById('bulkProgressSection').style.display = 'block';
-            document.getElementById('bulkCancelBtn').style.display = '';
             if (data.running) {
                 setPauseMode();
                 startProgressPolling();
             } else {
-                setResumeMode();
-                // Do one poll to show current stats
+                // One poll to determine correct state (Resume, Retry, or done)
                 pollProgress();
             }
         })
@@ -537,6 +590,7 @@ window.addEventListener('DOMContentLoaded', function() {
     document.getElementById('assemblySelect').addEventListener('change', onAssemblyChange);
     document.getElementById('bulkStartBtn').addEventListener('click', startBulk);
     document.getElementById('bulkCancelBtn').onclick = pauseBulk;
+    document.getElementById('bulkRetryBtn').addEventListener('click', retryFailed);
 
     document.getElementById('urlInput').addEventListener('keydown', function(e) {
         if (e.key === 'Enter') convertUrl();

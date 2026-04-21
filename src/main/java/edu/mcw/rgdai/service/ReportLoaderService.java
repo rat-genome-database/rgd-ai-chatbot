@@ -236,6 +236,26 @@ public class ReportLoaderService {
         return resp;
     }
 
+    public java.util.Map<String, Object> retryFailed(String reportType, int speciesKey, int mapKey) throws Exception {
+        if (!running.compareAndSet(false, true)) {
+            throw new IllegalStateException("Bulk load already running");
+        }
+
+        cancelled.set(false);
+        currentSymbol.set("Resetting failed records...");
+
+        ReportLoadStatusDAO statusDAO = new ReportLoadStatusDAO();
+        int reset = statusDAO.resetFailed(reportType, speciesKey, mapKey);
+        LOG.info("Retry: reset {} failed records to pending for type={} species={} mapKey={}", reset, reportType, speciesKey, mapKey);
+
+        self.processBatchAsync(reportType, speciesKey, mapKey, false);
+
+        java.util.Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("status", "retrying");
+        resp.put("reset", reset);
+        return resp;
+    }
+
     public java.util.Map<String, Object> cancel() {
         cancelled.set(true);
         java.util.Map<String, Object> resp = new LinkedHashMap<>();
