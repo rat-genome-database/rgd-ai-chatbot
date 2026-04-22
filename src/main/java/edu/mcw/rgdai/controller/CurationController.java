@@ -1,6 +1,7 @@
 package edu.mcw.rgdai.controller;
 
 import edu.mcw.rgdai.service.DocumentPreprocessor;
+import edu.mcw.rgdai.service.ReportMarkdownChunker;
 import edu.mcw.rgd.dao.impl.DocumentEmbeddingDAO;
 import edu.mcw.rgd.datamodel.DocumentEmbeddingSummary;
 import org.slf4j.Logger;
@@ -30,12 +31,15 @@ public class CurationController {
     private static final Logger LOG = LoggerFactory.getLogger(CurationController.class);
     private final VectorStore openaiVectorStore;
     private final DocumentPreprocessor preprocessor;
+    private final ReportMarkdownChunker reportChunker;
     private final DocumentEmbeddingDAO documentEmbeddingDAO;
 
     public CurationController(@Qualifier("openaiVectorStore") VectorStore openaiVectorStore,
-                               DocumentPreprocessor preprocessor) {
+                               DocumentPreprocessor preprocessor,
+                               ReportMarkdownChunker reportChunker) {
         this.openaiVectorStore = openaiVectorStore;
         this.preprocessor = preprocessor;
+        this.reportChunker = reportChunker;
         this.documentEmbeddingDAO = new DocumentEmbeddingDAO();
     }
 
@@ -205,52 +209,84 @@ public class CurationController {
                 }
             }
 
-            TikaDocumentReader documentReader = new TikaDocumentReader(destinationFile.toUri().toString());
-            List<Document> documents = documentReader.get();
-            String finalFileName = fileName;
-            documents.forEach(doc -> doc.getMetadata().put("filename", finalFileName));
-            LOG.info("Read document with {} characters, file_name: {}", documents.get(0).getContent().length(), fileName);
+            List<Document> finalChunks;
 
-            List<Document> preprocessedDocs = preprocessor.preprocessDocuments(documents);
-            LOG.info("Preprocessed into {} clean documents", preprocessedDocs.size());
+            if (ReportMarkdownChunker.isRgdReport(rawContent)) {
+                // RGD Report: section-aware chunking (bypasses Tika and preprocessor)
+                LOG.info("Detected RGD report — using section-aware chunking");
 
-            if (preprocessedDocs.isEmpty()) {
-                throw new RuntimeException("No usable content after preprocessing");
+                List<String> textChunks = reportChunker.chunk(rawContent);
+                LOG.info("Section-aware chunking produced {} chunks", textChunks.size());
+
+                String fn = fileName;
+                finalChunks = textChunks.stream()
+                        .filter(c -> c.trim().length() >= 50)
+                        .map(c -> {
+                            Map<String, Object> meta = new HashMap<>();
+                            meta.put("filename", fn);
+                            return new Document(c, meta);
+                        })
+                        .toList();
+
+                for (int i = 0; i < Math.min(3, finalChunks.size()); i++) {
+                    String content = finalChunks.get(i).getContent();
+                    LOG.info("Report chunk {}: {} chars - {}...",
+                            i + 1, content.length(),
+                            content.substring(0, Math.min(150, content.length())).replaceAll("\n", " "));
+                }
+
+                LOG.info("Report chunks after length filter: {}", finalChunks.size());
+            } else {
+                // Normal file: Tika + preprocessor + TokenTextSplitter
+                LOG.info("Non-report file — using standard chunking pipeline");
+
+                TikaDocumentReader documentReader = new TikaDocumentReader(destinationFile.toUri().toString());
+                List<Document> documents = documentReader.get();
+                String finalFileName = fileName;
+                documents.forEach(doc -> doc.getMetadata().put("filename", finalFileName));
+                LOG.info("Read document with {} characters, file_name: {}", documents.get(0).getContent().length(), fileName);
+
+                List<Document> preprocessedDocs = preprocessor.preprocessDocuments(documents);
+                LOG.info("Preprocessed into {} clean documents", preprocessedDocs.size());
+
+                if (preprocessedDocs.isEmpty()) {
+                    throw new RuntimeException("No usable content after preprocessing");
+                }
+
+                TokenTextSplitter splitter = TokenTextSplitter.builder()
+                        .withChunkSize(1000)
+                        .withMinChunkSizeChars(200)
+                        .withMinChunkLengthToEmbed(50)
+                        .withMaxNumChunks(10000)
+                        .withKeepSeparator(true)
+                        .build();
+
+                List<Document> splitDocuments = splitter.apply(preprocessedDocs);
+                LOG.info("Split into {} chunks after preprocessing", splitDocuments.size());
+
+                for (int i = 0; i < Math.min(3, splitDocuments.size()); i++) {
+                    String content = splitDocuments.get(i).getContent();
+                    LOG.info("Sample chunk {}: {} chars - {}...",
+                            i + 1, content.length(),
+                            content.substring(0, Math.min(150, content.length())).replaceAll("\n", " "));
+                }
+
+                finalChunks = splitDocuments.stream()
+                        .filter(doc -> preprocessor.isQualityChunk(doc.getContent()))
+                        .toList();
+
+                LOG.info("Quality filtered: {} chunks retained out of {}", finalChunks.size(), splitDocuments.size());
             }
 
-            TokenTextSplitter splitter = TokenTextSplitter.builder()
-                    .withChunkSize(800)
-                    .withMinChunkSizeChars(200)
-                    .withMinChunkLengthToEmbed(50)
-                    .withMaxNumChunks(10000)
-                    .withKeepSeparator(true)
-                    .build();
-
-            List<Document> splitDocuments = splitter.apply(preprocessedDocs);
-            LOG.info("Split into {} chunks after preprocessing", splitDocuments.size());
-
-            for (int i = 0; i < Math.min(3, splitDocuments.size()); i++) {
-                String content = splitDocuments.get(i).getContent();
-                LOG.info("Sample chunk {}: {} chars - {}...",
-                        i + 1, content.length(),
-                        content.substring(0, Math.min(150, content.length())).replaceAll("\n", " "));
+            if (finalChunks.isEmpty()) {
+                throw new RuntimeException("No usable content found after processing");
             }
 
-            List<Document> qualityChunks = splitDocuments.stream()
-                    .filter(doc -> preprocessor.isQualityChunk(doc.getContent()))
-                    .toList();
-
-            LOG.info("Quality filtered: {} chunks retained out of {}", qualityChunks.size(), splitDocuments.size());
-
-            if (qualityChunks.isEmpty()) {
-                throw new RuntimeException("No quality content found after processing");
-            }
-
-            openaiVectorStore.add(qualityChunks);
+            openaiVectorStore.add(finalChunks);
             LOG.info("Successfully added {} chunks to OpenAI vector store for file: {}",
-                    qualityChunks.size(), file.getOriginalFilename());
+                    finalChunks.size(), file.getOriginalFilename());
 
-            return qualityChunks.size();
+            return finalChunks.size();
         } finally {
             try {
                 Files.deleteIfExists(destinationFile);
