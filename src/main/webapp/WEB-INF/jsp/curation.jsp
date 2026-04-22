@@ -58,6 +58,9 @@
             <button class="action-btn upload-btn" id="uploadBtn">
                 <i class="fas fa-cloud-upload-alt"></i> Upload Files
             </button>
+            <button class="action-btn server-files-btn" id="serverFilesBtn">
+                <i class="fas fa-server"></i> Server Files
+            </button>
         </div>
         <div class="pagination-bar pagination-top" id="docPaginationTop"></div>
         <div class="table-wrapper">
@@ -155,6 +158,52 @@
             <button class="danger-btn" id="deleteConfirmBtn">
                 <i class="fas fa-trash-alt"></i> Delete
             </button>
+        </div>
+    </div>
+</div>
+
+<!-- Server Files / Bulk Embed Modal -->
+<div class="modal-overlay" id="serverFilesModal">
+    <div class="modal-box modal-box-large">
+        <div class="modal-header">
+            <h3><i class="fas fa-server"></i> Server Files</h3>
+            <button class="modal-close" id="serverFilesModalClose">&times;</button>
+        </div>
+        <div class="modal-body">
+            <!-- Directory listing -->
+            <div id="dirListing">
+                <div class="table-spinner"></div> Loading directories...
+            </div>
+
+            <!-- Embed Progress Section (hidden until embed starts) -->
+            <div id="embedProgressSection" style="display:none;">
+                <div class="embed-progress-header">
+                    <h4><i class="fas fa-tasks"></i> Embedding Progress</h4>
+                    <div class="embed-controls">
+                        <button class="action-btn danger-btn btn-hidden" id="embedCancelBtn">
+                            <i class="fas fa-pause"></i> Pause
+                        </button>
+                        <button class="action-btn retry-btn btn-hidden" id="embedRetryBtn">
+                            <i class="fas fa-redo"></i> Retry Failed
+                        </button>
+                    </div>
+                </div>
+                <div class="embed-stats">
+                    <span class="embed-pill embed-pill-total">Total: <strong id="embedTotal">0</strong></span>
+                    <span class="embed-pill embed-pill-completed">Embedded: <strong id="embedCompleted">0</strong></span>
+                    <span class="embed-pill embed-pill-skipped">Skipped: <strong id="embedSkipped">0</strong></span>
+                    <span class="embed-pill embed-pill-failed">Failed: <strong id="embedFailed">0</strong></span>
+                    <span class="embed-pill embed-pill-pending">Pending: <strong id="embedPending">0</strong></span>
+                </div>
+                <div class="embed-current" id="embedCurrent"></div>
+                <div class="embed-progress-track">
+                    <div class="embed-progress-fill" id="embedProgressFill" style="width:0%"></div>
+                </div>
+                <div class="embed-progress-pct" id="embedProgressPct">0%</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="cancel-btn" id="serverFilesCloseBtn">Close</button>
         </div>
     </div>
 </div>

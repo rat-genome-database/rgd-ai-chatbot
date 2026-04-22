@@ -1067,6 +1067,154 @@ body {
 }
 
 /* ============================================================
+   Server Files / Bulk Embed
+   ============================================================ */
+.server-files-btn {
+    background: linear-gradient(135deg, #059669, #047857) !important;
+    color: white !important;
+}
+
+.server-files-btn:hover {
+    box-shadow: 0 4px 12px rgba(5, 150, 105, 0.4) !important;
+    transform: translateY(-1px) !important;
+}
+
+/* Directory table layout */
+table.dir-table {
+    table-layout: fixed !important;
+    width: 100% !important;
+}
+
+.embed-action-btn,
+.reembed-action-btn {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+    padding: 5px 12px !important;
+    font-size: 0.78rem !important;
+    font-weight: 500 !important;
+    border: none !important;
+    border-radius: 6px !important;
+    cursor: pointer !important;
+    color: white !important;
+    transition: background 0.2s !important;
+}
+
+.embed-action-btn {
+    background: #059669 !important;
+}
+
+.embed-action-btn:hover {
+    background: #047857 !important;
+}
+
+.reembed-action-btn {
+    background: #d97706 !important;
+}
+
+.reembed-action-btn:hover {
+    background: #b45309 !important;
+}
+
+/* Embed progress section */
+.embed-progress-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    margin: 20px 0 12px 0 !important;
+    padding-top: 16px !important;
+    border-top: 1px solid #e5e7eb !important;
+}
+
+.embed-progress-header h4 {
+    margin: 0 !important;
+    font-size: 0.95rem !important;
+    color: #1a1a2e !important;
+}
+
+.embed-controls {
+    display: flex !important;
+    gap: 8px !important;
+}
+
+.embed-stats {
+    display: flex !important;
+    gap: 8px !important;
+    margin-bottom: 12px !important;
+    flex-wrap: wrap !important;
+}
+
+.embed-pill {
+    padding: 4px 12px !important;
+    border-radius: 20px !important;
+    font-size: 0.8rem !important;
+    font-weight: 500 !important;
+}
+
+.embed-pill-total { background: #e5e7eb !important; color: #374151 !important; }
+.embed-pill-completed { background: #d1fae5 !important; color: #065f46 !important; }
+.embed-pill-skipped { background: #fef3c7 !important; color: #92400e !important; }
+.embed-pill-failed { background: #fee2e2 !important; color: #991b1b !important; }
+.embed-pill-pending { background: #dbeafe !important; color: #1e4f82 !important; }
+
+.embed-current {
+    font-size: 0.8rem !important;
+    color: #6b7280 !important;
+    margin-bottom: 8px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    min-height: 1.2em !important;
+}
+
+.embed-progress-track {
+    height: 10px !important;
+    background: #e5e7eb !important;
+    border-radius: 5px !important;
+    overflow: hidden !important;
+}
+
+.embed-progress-fill {
+    height: 100% !important;
+    background: linear-gradient(90deg, #059669, #047857) !important;
+    border-radius: 5px !important;
+    transition: width 0.3s ease !important;
+}
+
+.embed-progress-pct {
+    text-align: center !important;
+    font-size: 0.85rem !important;
+    font-weight: 600 !important;
+    color: #059669 !important;
+    margin-top: 4px !important;
+}
+
+/* Button styles within the modal */
+#serverFilesModal .danger-btn {
+    background: linear-gradient(135deg, #dc2626, #b91c1c) !important;
+    color: white !important;
+    padding: 6px 14px !important;
+    font-size: 0.8rem !important;
+    border: none !important;
+    border-radius: 6px !important;
+    cursor: pointer !important;
+}
+
+#serverFilesModal .retry-btn {
+    background: linear-gradient(135deg, #d97706, #b45309) !important;
+    color: white !important;
+    padding: 6px 14px !important;
+    font-size: 0.8rem !important;
+    border: none !important;
+    border-radius: 6px !important;
+    cursor: pointer !important;
+}
+
+.btn-hidden {
+    display: none !important;
+}
+
+/* ============================================================
    Responsive
    ============================================================ */
 @media (max-width: 768px) {

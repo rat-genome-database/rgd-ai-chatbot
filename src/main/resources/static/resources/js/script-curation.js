@@ -515,6 +515,242 @@ const formatFileSize = (bytes) => {
 };
 
 // ============================================================
+// Server Files / Bulk Embed
+// ============================================================
+let embedProgressTimer = null;
+let embedActivePath = null;
+
+const openServerFilesModal = () => {
+    openModal('serverFilesModal');
+    loadDirectories();
+    checkActiveEmbed();
+};
+
+const loadDirectories = () => {
+    document.getElementById('dirListing').innerHTML =
+        '<div class="table-spinner"></div> Loading directories...';
+
+    fetch(contextPath + '/curation/bulk-embed/directories')
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                document.getElementById('dirListing').innerHTML =
+                    '<p class="error-text">' + escapeHtml(data.error) + '</p>';
+                return;
+            }
+            renderDirectoryTable(data);
+        })
+        .catch(err => {
+            document.getElementById('dirListing').innerHTML =
+                '<p class="error-text">Failed to load directories</p>';
+        });
+};
+
+const renderDirectoryTable = (dirs) => {
+    if (!dirs || dirs.length === 0) {
+        document.getElementById('dirListing').innerHTML =
+            '<p style="color:#9ca3af; text-align:center; padding:24px;">No server files found. Use the Report Loader to generate markdown files first.</p>';
+        return;
+    }
+
+    let html = '<table class="data-table dir-table"><thead><tr>';
+    html += '<th style="width:25%; text-align:left !important;">Directory</th>';
+    html += '<th style="width:13%; text-align:center !important;">Files</th>';
+    html += '<th style="width:13%; text-align:center !important;">Embedded</th>';
+    html += '<th style="width:13%; text-align:center !important;">Remaining</th>';
+    html += '<th style="width:36%; text-align:center !important;">Action</th>';
+    html += '</tr></thead><tbody>';
+
+    dirs.forEach(d => {
+        const remaining = d.remainingFiles || 0;
+        html += '<tr>';
+        html += '<td style="text-align:left;"><i class="fas fa-folder" style="color:#d97706; margin-right:8px;"></i>' + escapeHtml(d.path) + '</td>';
+        html += '<td style="text-align:center;">' + (d.totalFiles || 0).toLocaleString() + '</td>';
+        html += '<td style="text-align:center;"><span class="chunk-badge">' + (d.embeddedFiles || 0).toLocaleString() + '</span></td>';
+        html += '<td style="text-align:center;">' + remaining.toLocaleString() + '</td>';
+        html += '<td style="text-align:center; white-space:nowrap;">';
+        if (remaining > 0) {
+            html += '<button class="embed-action-btn" '
+                  + 'onclick="startBulkEmbed(\'' + escapeAttr(d.path) + '\', false)">'
+                  + '<i class="fas fa-play"></i> Embed</button> ';
+            html += '<button class="reembed-action-btn" '
+                  + 'onclick="startBulkEmbed(\'' + escapeAttr(d.path) + '\', true)">'
+                  + '<i class="fas fa-redo"></i> Re-embed</button>';
+        } else if (d.totalFiles > 0) {
+            html += '<button class="reembed-action-btn" '
+                  + 'onclick="startBulkEmbed(\'' + escapeAttr(d.path) + '\', true)">'
+                  + '<i class="fas fa-redo"></i> Re-embed</button>';
+        }
+        html += '</td></tr>';
+    });
+
+    html += '</tbody></table>';
+    document.getElementById('dirListing').innerHTML = html;
+};
+
+const startBulkEmbed = (path, forceReembed) => {
+    const action = forceReembed ? 'Re-embed' : 'Embed';
+    if (forceReembed && !confirm('Re-embed will delete existing embeddings and re-process all files in "' + path + '". Continue?')) {
+        return;
+    }
+
+    fetch(contextPath + '/curation/bulk-embed/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: path, forceReembed: forceReembed })
+    })
+    .then(res => {
+        if (res.status === 409) return res.json().then(d => { throw new Error(d.error); });
+        return res.json();
+    })
+    .then(data => {
+        if (data.error) {
+            showToast(data.error, 'error');
+            return;
+        }
+        embedActivePath = path;
+        document.getElementById('embedProgressSection').style.display = 'block';
+        setEmbedPauseMode();
+        showToast(action + ' started for ' + path, 'success');
+        startEmbedProgressPolling();
+    })
+    .catch(err => {
+        showToast('Failed to start: ' + err.message, 'error');
+    });
+};
+
+const pauseBulkEmbed = () => {
+    fetch(contextPath + '/curation/bulk-embed/cancel', { method: 'POST' })
+        .then(res => res.json())
+        .then(() => showToast('Pausing...', 'info'))
+        .catch(err => showToast('Pause failed: ' + err.message, 'error'));
+};
+
+const resumeBulkEmbed = () => {
+    if (embedActivePath) {
+        startBulkEmbed(embedActivePath, false);
+    }
+};
+
+const retryBulkEmbed = () => {
+    document.getElementById('embedRetryBtn').classList.add('btn-hidden');
+    fetch(contextPath + '/curation/bulk-embed/retry', { method: 'POST' })
+        .then(res => {
+            if (res.status === 409) return res.json().then(d => { throw new Error(d.error); });
+            return res.json();
+        })
+        .then(data => {
+            if (data.error) {
+                showToast(data.error, 'error');
+                document.getElementById('embedRetryBtn').classList.remove('btn-hidden');
+                return;
+            }
+            setEmbedPauseMode();
+            showToast('Retrying ' + data.retryCount + ' failed files', 'success');
+            startEmbedProgressPolling();
+        })
+        .catch(err => {
+            showToast('Retry failed: ' + err.message, 'error');
+            document.getElementById('embedRetryBtn').classList.remove('btn-hidden');
+        });
+};
+
+const setEmbedPauseMode = () => {
+    const btn = document.getElementById('embedCancelBtn');
+    btn.classList.remove('btn-hidden');
+    btn.className = 'action-btn danger-btn';
+    btn.innerHTML = '<i class="fas fa-pause"></i> Pause';
+    btn.onclick = pauseBulkEmbed;
+    document.getElementById('embedRetryBtn').classList.add('btn-hidden');
+};
+
+const setEmbedResumeMode = () => {
+    const btn = document.getElementById('embedCancelBtn');
+    btn.classList.remove('btn-hidden');
+    btn.className = 'action-btn embed-action-btn';
+    btn.innerHTML = '<i class="fas fa-play"></i> Resume';
+    btn.onclick = resumeBulkEmbed;
+};
+
+const startEmbedProgressPolling = () => {
+    if (embedProgressTimer) clearInterval(embedProgressTimer);
+    pollEmbedProgress();
+    embedProgressTimer = setInterval(pollEmbedProgress, 2000);
+};
+
+const stopEmbedProgressPolling = () => {
+    if (embedProgressTimer) {
+        clearInterval(embedProgressTimer);
+        embedProgressTimer = null;
+    }
+};
+
+const pollEmbedProgress = () => {
+    fetch(contextPath + '/curation/bulk-embed/progress')
+        .then(res => res.json())
+        .then(d => {
+            if (d.error) return;
+
+            document.getElementById('embedTotal').textContent = (d.total || 0).toLocaleString();
+            document.getElementById('embedCompleted').textContent = (d.completed || 0).toLocaleString();
+            document.getElementById('embedSkipped').textContent = (d.skipped || 0).toLocaleString();
+            document.getElementById('embedFailed').textContent = (d.failed || 0).toLocaleString();
+            document.getElementById('embedPending').textContent = (d.pending || 0).toLocaleString();
+
+            const processed = (d.completed || 0) + (d.skipped || 0) + (d.failed || 0);
+            const pct = d.total > 0 ? Math.round(100 * processed / d.total) : 0;
+            document.getElementById('embedProgressFill').style.width = pct + '%';
+            document.getElementById('embedProgressPct').textContent = pct + '%';
+
+            const currentEl = document.getElementById('embedCurrent');
+            currentEl.textContent = d.running && d.currentFile ? 'Processing: ' + d.currentFile : '';
+
+            if (d.running) {
+                setEmbedPauseMode();
+            } else {
+                stopEmbedProgressPolling();
+                loadDirectories();  // Refresh directory counts
+                refreshAll();       // Refresh embedded documents table
+
+                if (d.pending > 0) {
+                    setEmbedResumeMode();
+                    if (d.failed > 0) {
+                        document.getElementById('embedRetryBtn').classList.remove('btn-hidden');
+                    }
+                    showToast('Embedding paused (' + d.completed + ' embedded, ' + d.pending + ' pending)', 'info');
+                } else if (d.failed > 0) {
+                    document.getElementById('embedCancelBtn').classList.add('btn-hidden');
+                    document.getElementById('embedRetryBtn').classList.remove('btn-hidden');
+                    showToast('Embedding finished with ' + d.failed + ' failures (' + d.completed + ' embedded)', 'error');
+                } else {
+                    document.getElementById('embedCancelBtn').classList.add('btn-hidden');
+                    document.getElementById('embedRetryBtn').classList.add('btn-hidden');
+                    showToast('Embedding complete! ' + d.completed + ' files embedded, ' + d.skipped + ' skipped', 'success');
+                }
+            }
+        })
+        .catch(() => { /* keep polling */ });
+};
+
+const checkActiveEmbed = () => {
+    fetch(contextPath + '/curation/bulk-embed/active')
+        .then(res => res.json())
+        .then(data => {
+            if (data.active) {
+                embedActivePath = data.path || null;
+                document.getElementById('embedProgressSection').style.display = 'block';
+                if (data.running) {
+                    setEmbedPauseMode();
+                    startEmbedProgressPolling();
+                } else {
+                    pollEmbedProgress(); // One poll to determine state
+                }
+            }
+        })
+        .catch(() => {});
+};
+
+// ============================================================
 // Initialize
 // ============================================================
 window.addEventListener('load', () => {
@@ -532,6 +768,19 @@ window.addEventListener('load', () => {
 
     // Upload button
     document.getElementById('uploadBtn').addEventListener('click', openUploadModal);
+
+    // Server Files button
+    document.getElementById('serverFilesBtn').addEventListener('click', openServerFilesModal);
+
+    // Server Files modal events
+    document.getElementById('serverFilesModalClose').addEventListener('click', () => {
+        closeModal('serverFilesModal');
+        stopEmbedProgressPolling();
+    });
+    document.getElementById('serverFilesCloseBtn').addEventListener('click', () => {
+        closeModal('serverFilesModal');
+        stopEmbedProgressPolling();
+    });
 
     // Upload modal events
     document.getElementById('uploadModalClose').addEventListener('click', () => closeModal('uploadModal'));
