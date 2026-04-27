@@ -400,7 +400,7 @@ function pollProgress() {
             var pct = d.total > 0 ? Math.round(100 * done / d.total) : 0;
             document.getElementById('progressFill').style.width = pct + '%';
             document.getElementById('progressPct').textContent = pct + '%';
-            document.getElementById('progCurrent').textContent = d.running && d.currentSymbol
+            document.getElementById('progCurrent').innerHTML = d.running && d.currentSymbol
                 ? 'Processing: ' + d.currentSymbol
                 : '';
 
