@@ -3,6 +3,7 @@
 // ============================================================
 
 var progressTimer = null;
+var _resumeUpdateStartBtn = null; // listener ref for cleanup
 
 // Active batch params (from DB check on page load or from startBulk)
 var activeBatchType = null;
@@ -351,6 +352,11 @@ function setPauseMode() {
     document.getElementById('bulkStartBtn').disabled = true;
     document.getElementById('bulkRetryBtn').classList.add('btn-hidden');
     document.getElementById('resetCheckbox').onchange = null;
+    if (_resumeUpdateStartBtn) {
+        document.getElementById('reportType').removeEventListener('change', _resumeUpdateStartBtn);
+        document.getElementById('assemblySelect').removeEventListener('change', _resumeUpdateStartBtn);
+        _resumeUpdateStartBtn = null;
+    }
 }
 
 function setResumeMode() {
@@ -359,12 +365,29 @@ function setResumeMode() {
     btn.classList.add('bulk-btn');
     btn.innerHTML = '<i class="fas fa-redo"></i> Resume';
     btn.onclick = resumeBulk;
-    // Start Bulk only enabled when Start Fresh is checked
+
     var reset = document.getElementById('resetCheckbox');
-    document.getElementById('bulkStartBtn').disabled = !reset.checked;
-    reset.onchange = function() {
-        document.getElementById('bulkStartBtn').disabled = !reset.checked;
+    var startBtn = document.getElementById('bulkStartBtn');
+
+    // Clean up previous listeners
+    if (_resumeUpdateStartBtn) {
+        document.getElementById('reportType').removeEventListener('change', _resumeUpdateStartBtn);
+        document.getElementById('assemblySelect').removeEventListener('change', _resumeUpdateStartBtn);
+    }
+
+    _resumeUpdateStartBtn = function() {
+        var selType = document.getElementById('reportType').value;
+        var selMapKey = document.getElementById('assemblySelect').value || '0';
+        var isDifferent = selType !== activeBatchType || selMapKey !== activeBatchMapKey;
+        // Different selection = new batch, enable Start freely
+        // Same selection = require Start Fresh to restart from scratch
+        startBtn.disabled = !isDifferent && !reset.checked;
     };
+
+    _resumeUpdateStartBtn();
+    reset.onchange = _resumeUpdateStartBtn;
+    document.getElementById('reportType').addEventListener('change', _resumeUpdateStartBtn);
+    document.getElementById('assemblySelect').addEventListener('change', _resumeUpdateStartBtn);
 }
 
 function startProgressPolling() {
