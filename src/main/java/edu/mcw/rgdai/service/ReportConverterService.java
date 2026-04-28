@@ -611,7 +611,7 @@ public class ReportConverterService {
                     Elements tds = tr.select("> td");
                     if (tds.isEmpty()) continue;
                     List<String> row = new ArrayList<>();
-                    for (Element td : tds) row.add(cleanText(td.text()).replace("|", "/"));
+                    for (Element td : tds) row.add(extractCellWithLinks(td));
                     if (row.stream().anyMatch(c -> !c.trim().isEmpty())) {
                         while (row.size() < headers.size()) row.add("");
                         if (row.size() > headers.size()) row = row.subList(0, headers.size());
@@ -627,7 +627,7 @@ public class ReportConverterService {
                     Elements tds = tr.select("> td");
                     if (tds.isEmpty()) continue;
                     List<String> row = new ArrayList<>();
-                    for (Element td : tds) row.add(cleanText(td.text()).replace("|", "/"));
+                    for (Element td : tds) row.add(extractCellWithLinks(td));
                     if (row.stream().anyMatch(c -> !c.trim().isEmpty())) {
                         while (row.size() < headers.size()) row.add("");
                         if (row.size() > headers.size()) row = row.subList(0, headers.size());
@@ -1209,5 +1209,25 @@ public class ReportConverterService {
     private static String cleanText(String text) {
         if (text == null) return "";
         return text.replace("\u00a0", " ").trim();
+    }
+
+    /** Convert &lt;a&gt; tags in an element to markdown link syntax, then return cleaned text. */
+    private String extractCellWithLinks(Element td) {
+        Element clone = td.clone();
+        for (Element a : new ArrayList<>(clone.select("a[href]"))) {
+            String href = a.attr("href");
+            if (href.startsWith("/")) href = RGD_BASE + href;
+            if (href.startsWith("javascript:")) {
+                a.replaceWith(new TextNode(a.text()));
+            } else {
+                String linkText = cleanText(a.text());
+                if (!linkText.isEmpty()) {
+                    a.replaceWith(new TextNode("[" + linkText + "](" + href + ")"));
+                } else {
+                    a.remove();
+                }
+            }
+        }
+        return cleanText(clone.text()).replace("|", "/");
     }
 }
