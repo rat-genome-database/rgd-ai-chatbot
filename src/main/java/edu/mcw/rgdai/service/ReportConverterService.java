@@ -80,7 +80,7 @@ public class ReportConverterService {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .header("User-Agent", USER_AGENT)
-                .timeout(Duration.ofSeconds(60))
+                .timeout(Duration.ofSeconds(180))
                 .GET()
                 .build();
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
