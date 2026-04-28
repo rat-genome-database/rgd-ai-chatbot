@@ -172,6 +172,7 @@ function onSpeciesChange() {
             assemblySel.appendChild(allOpt);
 
             updateCount();
+            assemblySel.dispatchEvent(new Event('change'));
         })
         .catch(function(e) { showError('Failed to load assemblies: ' + e.message); });
 }
@@ -377,8 +378,13 @@ function setResumeMode() {
 
     _resumeUpdateStartBtn = function() {
         var selType = document.getElementById('reportType').value;
-        var selMapKey = document.getElementById('assemblySelect').value || '0';
-        var isDifferent = selType !== activeBatchType || selMapKey !== activeBatchMapKey;
+        var aSel = document.getElementById('assemblySelect');
+        var selMapKey = aSel.value || '0';
+        // Don't treat an unloaded assembly dropdown as "different"
+        var assemblyReady = aSel.options.length > 0 && aSel.options[0].value !== '';
+        var typeDifferent = selType !== activeBatchType;
+        var mapDifferent = assemblyReady && selMapKey !== activeBatchMapKey;
+        var isDifferent = typeDifferent || mapDifferent;
         // Different selection = new batch, enable Start freely
         // Same selection = require Start Fresh to restart from scratch
         startBtn.disabled = !isDifferent && !reset.checked;
@@ -580,6 +586,7 @@ function checkActiveBatch() {
                                     allOpt.textContent = 'All';
                                     aSel.appendChild(allOpt);
                                     if (data.mapKey) aSel.value = String(data.mapKey);
+                                    aSel.dispatchEvent(new Event('change'));
                                 })
                                 .catch(function() {});
                         }
