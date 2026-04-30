@@ -1,6 +1,8 @@
 package edu.mcw.rgdai.service;
 
 import edu.mcw.rgd.dao.impl.DocumentEmbeddingDAO;
+import edu.mcw.rgd.dao.impl.EmbedStatusDAO;
+import edu.mcw.rgd.datamodel.EmbedStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -44,6 +46,7 @@ public class BulkEmbedService {
     private final ReportMarkdownChunker reportChunker;
     private final DocumentPreprocessor preprocessor;
     private final DocumentEmbeddingDAO documentEmbeddingDAO;
+    private final EmbedStatusDAO embedStatusDAO;
 
     @Lazy
     @Autowired
@@ -81,6 +84,7 @@ public class BulkEmbedService {
         this.reportChunker = reportChunker;
         this.preprocessor = preprocessor;
         this.documentEmbeddingDAO = new DocumentEmbeddingDAO();
+        this.embedStatusDAO = new EmbedStatusDAO();
     }
 
     // ============================================================
@@ -259,12 +263,33 @@ public class BulkEmbedService {
             throw new IllegalStateException("Bulk embed already running");
         }
 
-        List<String> toRetry = new ArrayList<>(failedFiles);
-        int count = toRetry.size();
+        // Get failed + interrupted files from DB (survives restart)
+        List<String> toRetry = new ArrayList<>();
+        try {
+            List<EmbedStatus> failed = embedStatusDAO.getByStatus("FAILED");
+            List<EmbedStatus> interrupted = embedStatusDAO.getByStatus("IN_PROGRESS");
+            for (EmbedStatus es : failed) {
+                toRetry.add(Paths.get(outputDir, es.getFilePath()).toString());
+            }
+            for (EmbedStatus es : interrupted) {
+                toRetry.add(Paths.get(outputDir, es.getFilePath()).toString());
+            }
+        } catch (Exception e) {
+            LOG.error("Failed to load retry list from DB", e);
+            // Fall back to in-memory list
+            toRetry.addAll(failedFiles.stream()
+                    .map(fp -> Paths.get(outputDir, fp).toString())
+                    .toList());
+        }
 
+        int count = toRetry.size();
         cancelled.set(false);
+        totalCount.set(count);
+        completedCount.set(0);
+        skippedCount.set(0);
         failedCount.set(0);
         failedFiles.clear();
+        activePath = "retry";
         currentFile.set("Retrying failed files...");
 
         self.processRetryAsync(toRetry);
@@ -302,24 +327,29 @@ public class BulkEmbedService {
             totalCount.set(mdFiles.size());
             LOG.info("Found {} markdown files in {}", mdFiles.size(), dir);
 
-            // Load all already-embedded file names in one batch query
-            Set<String> embeddedNames;
+            // Load completed file paths from embed_status table
+            Set<String> completedPaths;
             try {
-                embeddedNames = documentEmbeddingDAO.getEmbeddedFileNames();
+                List<EmbedStatus> completed = embedStatusDAO.getByStatus("COMPLETED");
+                completedPaths = completed.stream()
+                        .map(EmbedStatus::getFilePath)
+                        .collect(Collectors.toSet());
+                LOG.info("Found {} already-completed files in embed_status", completedPaths.size());
             } catch (Exception e) {
-                LOG.error("Failed to load embedded file names", e);
-                embeddedNames = Collections.emptySet();
+                LOG.error("Failed to load embed status", e);
+                completedPaths = Collections.emptySet();
             }
 
             ExecutorService pool = Executors.newFixedThreadPool(threadCount);
-            Set<String> finalEmbeddedNames = embeddedNames;
+            Set<String> finalCompletedPaths = completedPaths;
+            Path rootDir = Paths.get(outputDir);
 
             for (Path mdFile : mdFiles) {
                 if (cancelled.get()) {
                     LOG.info("Bulk embed paused — stopping submission at {}", mdFile.getFileName());
                     break;
                 }
-                pool.submit(() -> processOneFile(mdFile, finalEmbeddedNames, forceReembed));
+                pool.submit(() -> processOneFile(mdFile, rootDir, finalCompletedPaths, forceReembed));
             }
 
             pool.shutdown();
@@ -343,20 +373,13 @@ public class BulkEmbedService {
         LOG.info("Bulk embed retry started: {} files", filePaths.size());
 
         try {
-            Set<String> embeddedNames;
-            try {
-                embeddedNames = documentEmbeddingDAO.getEmbeddedFileNames();
-            } catch (Exception e) {
-                LOG.error("Failed to load embedded file names for retry", e);
-                embeddedNames = Collections.emptySet();
-            }
-
             ExecutorService pool = Executors.newFixedThreadPool(threadCount);
-            Set<String> finalEmbeddedNames = embeddedNames;
+            Path rootDir = Paths.get(outputDir);
 
             for (String fp : filePaths) {
                 if (cancelled.get()) break;
-                pool.submit(() -> processOneFile(Paths.get(fp), finalEmbeddedNames, false));
+                // Retry always re-processes — pass empty completed set
+                pool.submit(() -> processOneFile(Paths.get(fp), rootDir, Collections.emptySet(), false));
             }
 
             pool.shutdown();
@@ -379,14 +402,21 @@ public class BulkEmbedService {
     // Per-file processing
     // ============================================================
 
-    private void processOneFile(Path mdFile, Set<String> embeddedNames, boolean forceReembed) {
+    private void processOneFile(Path mdFile, Path rootDir, Set<String> completedPaths, boolean forceReembed) {
         if (cancelled.get()) return;
 
         String rawFileName = mdFile.getFileName().toString();
+        String filePath = rootDir.relativize(mdFile).toString().replace('\\', '/');
         activeFiles.add(rawFileName);
         updateCurrentFile();
 
         try {
+            // Skip if already completed (unless force re-embed)
+            if (!forceReembed && completedPaths.contains(filePath)) {
+                skippedCount.incrementAndGet();
+                return;
+            }
+
             // Read content
             String content = Files.readString(mdFile, StandardCharsets.UTF_8);
 
@@ -400,25 +430,22 @@ public class BulkEmbedService {
                 }
             }
 
-            // Skip logic: check both raw filename and display name
-            boolean alreadyEmbedded = embeddedNames.contains(rawFileName)
-                    || (!displayName.equals(rawFileName) && embeddedNames.contains(displayName));
-
-            if (!forceReembed && alreadyEmbedded) {
-                skippedCount.incrementAndGet();
-                return;
+            // Mark IN_PROGRESS in embed_status
+            try {
+                embedStatusDAO.deleteByFilePath(filePath);
+                embedStatusDAO.insert(filePath, displayName, "IN_PROGRESS");
+            } catch (Exception e) {
+                LOG.warn("Failed to update embed_status for {}: {}", filePath, e.getMessage());
             }
 
-            // Force re-embed: delete old chunks first
-            if (forceReembed && alreadyEmbedded) {
-                try {
-                    documentEmbeddingDAO.deleteByFileName(displayName);
-                    if (!displayName.equals(rawFileName)) {
-                        documentEmbeddingDAO.deleteByFileName(rawFileName);
-                    }
-                } catch (Exception e) {
-                    LOG.warn("Failed to delete old chunks for {}: {}", displayName, e.getMessage());
+            // Delete any existing chunks (clean slate)
+            try {
+                documentEmbeddingDAO.deleteByFileName(displayName);
+                if (!displayName.equals(rawFileName)) {
+                    documentEmbeddingDAO.deleteByFileName(rawFileName);
                 }
+            } catch (Exception e) {
+                LOG.warn("Failed to delete old chunks for {}: {}", displayName, e.getMessage());
             }
 
             // Chunk the content
@@ -436,14 +463,12 @@ public class BulkEmbedService {
                         })
                         .toList();
             } else {
-                // Non-report: use preprocessor + TokenTextSplitter (no Tika needed, already text)
                 Document doc = new Document(content, Map.of("filename", fn));
                 List<Document> preprocessed = preprocessor.preprocessDocuments(List.of(doc));
 
                 if (preprocessed.isEmpty()) {
                     LOG.warn("No usable content after preprocessing: {}", rawFileName);
-                    failedCount.incrementAndGet();
-                    failedFiles.add(mdFile.toString());
+                    markFailed(filePath, "No usable content after preprocessing");
                     return;
                 }
 
@@ -463,23 +488,38 @@ public class BulkEmbedService {
 
             if (finalChunks.isEmpty()) {
                 LOG.warn("No usable chunks from file: {}", rawFileName);
-                failedCount.incrementAndGet();
-                failedFiles.add(mdFile.toString());
+                markFailed(filePath, "No usable chunks produced");
                 return;
             }
 
             // Embed into vector store
             openaiVectorStore.add(finalChunks);
+
+            // Mark COMPLETED
+            try {
+                embedStatusDAO.updateStatus(filePath, "COMPLETED", null, finalChunks.size());
+            } catch (Exception e) {
+                LOG.warn("Failed to mark COMPLETED for {}: {}", filePath, e.getMessage());
+            }
             completedCount.incrementAndGet();
             LOG.debug("Embedded {} chunks for: {}", finalChunks.size(), displayName);
 
         } catch (Exception e) {
             LOG.warn("Failed to embed {}: {}", rawFileName, e.getMessage());
-            failedCount.incrementAndGet();
-            failedFiles.add(mdFile.toString());
+            markFailed(filePath, e.getMessage());
         } finally {
             activeFiles.remove(rawFileName);
             updateCurrentFile();
+        }
+    }
+
+    private void markFailed(String filePath, String errorMessage) {
+        failedCount.incrementAndGet();
+        failedFiles.add(filePath);
+        try {
+            embedStatusDAO.updateStatus(filePath, "FAILED", errorMessage, 0);
+        } catch (Exception e) {
+            LOG.warn("Failed to mark FAILED for {}: {}", filePath, e.getMessage());
         }
     }
 

@@ -81,6 +81,13 @@ public class ReportMarkdownChunker {
                 continue;
             }
 
+            // Skip sequence rows (gene Reference Sequences table)
+            // Nucleotide (| Sequence:) and protein (| - Sequence:)
+            if (trimmed.startsWith("| Sequence:") || trimmed.startsWith("| - Sequence:")) {
+                LOG.debug("Skipping sequence row ({} chars)", trimmed.length());
+                continue;
+            }
+
             Matcher m = HEADING.matcher(trimmed);
 
             if (m.matches()) {
