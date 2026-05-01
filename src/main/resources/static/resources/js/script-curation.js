@@ -782,6 +782,9 @@ window.addEventListener('load', () => {
         stopEmbedProgressPolling();
     });
 
+    // Bulk embed retry button
+    document.getElementById('embedRetryBtn').addEventListener('click', retryBulkEmbed);
+
     // Upload modal events
     document.getElementById('uploadModalClose').addEventListener('click', () => closeModal('uploadModal'));
     document.getElementById('uploadCancelBtn').addEventListener('click', () => closeModal('uploadModal'));
