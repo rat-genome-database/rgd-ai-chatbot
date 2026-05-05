@@ -75,6 +75,11 @@ public class ReportMarkdownChunker {
             }
         }
 
+        // Strain reports: restructure Related Phenotype Data rows into sub-sections
+        if (isStrainReport) {
+            lines = restructurePhenotypeData(lines);
+        }
+
         // Heading breadcrumb: level -> heading text (sorted by level)
         TreeMap<Integer, String> headingStack = new TreeMap<>();
 
@@ -386,6 +391,71 @@ public class ReportMarkdownChunker {
             if (i != colIndex) kept.add(cols[i]);
         }
         return String.join("|", kept);
+    }
+
+    /**
+     * Restructure Related Phenotype Data rows in strain reports.
+     * Converts a single oversized pipe-delimited row like:
+     *   | Rat Strains: * [link1] * [link2] | Clinical Measurements: * [link3] ... |
+     * Into sub-sections:
+     *   #### Rat Strains
+     *   * [link1]
+     *   * [link2]
+     *   #### Clinical Measurements
+     *   * [link3]
+     *   ...
+     */
+    private String[] restructurePhenotypeData(String[] lines) {
+        List<String> result = new ArrayList<>();
+        boolean inPhenoSection = false;
+
+        for (String line : lines) {
+            String trimmed = line.trim();
+
+            // Track when we enter/leave a Related Phenotype Data section
+            if (trimmed.startsWith("#")) {
+                inPhenoSection = trimmed.contains("Related Phenotype Data");
+                result.add(line);
+                continue;
+            }
+
+            // Restructure the phenotype data row
+            if (inPhenoSection && trimmed.startsWith("| Rat Strains:")) {
+                String[] cols = trimmed.split(" \\| ");
+                for (String col : cols) {
+                    // Clean leading/trailing pipe chars
+                    String cell = col.trim();
+                    if (cell.startsWith("|")) cell = cell.substring(1).trim();
+                    if (cell.endsWith("|")) cell = cell.substring(0, cell.length() - 1).trim();
+                    if (cell.isEmpty()) continue;
+
+                    // Split "Label: * [item1] * [item2]" into label + items
+                    int colonIdx = cell.indexOf(':');
+                    if (colonIdx < 0) continue;
+
+                    String label = cell.substring(0, colonIdx).trim();
+                    String items = cell.substring(colonIdx + 1).trim();
+
+                    result.add("#### " + label);
+                    // Split items at "* [" boundaries
+                    String[] parts = items.split("(?=\\* \\[)");
+                    for (String part : parts) {
+                        String item = part.trim();
+                        if (!item.isEmpty()) {
+                            result.add(item);
+                        }
+                    }
+                    result.add("");  // blank line between sub-sections
+                }
+                inPhenoSection = false;  // only one data row per section
+                LOG.info("Restructured Related Phenotype Data row ({} chars) into sub-sections", trimmed.length());
+                continue;
+            }
+
+            result.add(line);
+        }
+
+        return result.toArray(new String[0]);
     }
 
     /** Check if a line is a markdown table row (starts and ends with |). */
