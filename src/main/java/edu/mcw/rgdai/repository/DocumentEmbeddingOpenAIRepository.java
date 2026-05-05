@@ -15,7 +15,7 @@ public interface DocumentEmbeddingOpenAIRepository extends JpaRepository<Documen
     @Query(value = "SELECT * FROM document_embeddings ORDER BY embedding <=> CAST(:queryEmbedding AS vector) LIMIT :k", nativeQuery = true)
     List<DocumentEmbeddingOpenAI> findNearestNeighbors(@Param("queryEmbedding") float[] queryEmbedding, @Param("k") int k);
 
-    // Find nearest neighbors with minimum similarity threshold (same as Ollama)
+    // Find nearest neighbors with minimum similarity threshold
     @Query(value = "SELECT * FROM document_embeddings " +
             "WHERE (1 - (embedding <=> CAST(:queryEmbedding AS vector))) >= :threshold " +
             "ORDER BY embedding <=> CAST(:queryEmbedding AS vector) " +
@@ -25,6 +25,7 @@ public interface DocumentEmbeddingOpenAIRepository extends JpaRepository<Documen
             @Param("k") int k,
             @Param("threshold") double threshold
     );
+
 
     // Find by filename
     List<DocumentEmbeddingOpenAI> findByFileName(String fileName);

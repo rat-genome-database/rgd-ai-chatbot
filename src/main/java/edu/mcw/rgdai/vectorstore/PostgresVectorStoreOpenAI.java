@@ -12,6 +12,10 @@ import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Component;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import org.springframework.transaction.annotation.Transactional;
+
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +27,9 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
     private static final Logger LOG = LoggerFactory.getLogger(PostgresVectorStoreOpenAI.class);
     private final DocumentEmbeddingOpenAIRepository repository;
     private final EmbeddingModel embeddingModel;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     public PostgresVectorStoreOpenAI(DocumentEmbeddingOpenAIRepository repository, EmbeddingModel embeddingModel) {
         this.repository = repository;
@@ -59,12 +66,16 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public List<Document> similaritySearch(SearchRequest request) {
         LOG.info("Starting OpenAI similarity search for query: '{}'", request.getQuery());
         LOG.info("Search parameters - TopK: {}, Similarity threshold: {}",
                 request.getTopK(), request.getSimilarityThreshold());
 
         try {
+            // Increase HNSW ef_search for better recall on 2M+ vectors (default 40 misses results)
+            entityManager.createNativeQuery("SET hnsw.ef_search = 400").executeUpdate();
+
             // Generate embedding for the search query
             EmbeddingResponse response = embeddingModel.embedForResponse(List.of(request.getQuery()));
             float[] queryEmbedding = response.getResults().get(0).getOutput();
@@ -155,12 +166,16 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
      * NEW METHOD: Enhanced similarity search that includes similarity scores in metadata
      * This is used for re-ranking purposes
      */
+    @Transactional(readOnly = true)
     public List<Document> similaritySearchWithScores(SearchRequest request) {
         LOG.info("Starting OpenAI similarity search WITH SCORES for query: '{}'", request.getQuery());
         LOG.info("Search parameters - TopK: {}, Similarity threshold: {}",
                 request.getTopK(), request.getSimilarityThreshold());
 
         try {
+            // Increase HNSW ef_search for better recall on 2M+ vectors (default 40 misses results)
+            entityManager.createNativeQuery("SET hnsw.ef_search = 400").executeUpdate();
+
             // Generate embedding for the search query
             EmbeddingResponse response = embeddingModel.embedForResponse(List.of(request.getQuery()));
             float[] queryEmbedding = response.getResults().get(0).getOutput();

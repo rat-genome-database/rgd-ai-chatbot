@@ -137,40 +137,19 @@ public class ChatControllerOpenAI {
             // Post-process response to wrap filenames with [[...]] markers for frontend linking
             response = wrapFilenamesInResponse(response, pp.usedFilenames);
 
-            // Extract NCTIDs from AI response and store in session for future questions
-            List<String> responseNCTIDs = extractNCTIDs(response);
-            if (!responseNCTIDs.isEmpty()) {
-                Set<String> conversationNCTIDs = (Set<String>) request.getSession().getAttribute("conversationNCTIDs");
-                if (conversationNCTIDs == null) {
-                    conversationNCTIDs = new HashSet<>();
-                }
-                int beforeSize = conversationNCTIDs.size();
-                conversationNCTIDs.addAll(responseNCTIDs);
-                int afterSize = conversationNCTIDs.size();
-                int newNCTIDs = afterSize - beforeSize;
-                request.getSession().setAttribute("conversationNCTIDs", conversationNCTIDs);
-                LOG.info("Found {} NCTID mentions in response, {} unique NCTIDs total in conversation ({} new)",
-                         responseNCTIDs.size(), conversationNCTIDs.size(), newNCTIDs);
-                LOG.debug("Session NCTIDs: {}", conversationNCTIDs);
-            }
-
             long t7 = System.currentTimeMillis();
 
             // Log timing summary
             long total = t7 - pp.t0;
-            long nctidExtract = pp.t1 - pp.t0;
-            long vectorSearch = pp.t2 - pp.t1;
-            long rerank = pp.t3 - pp.t2;
-            long nctidLookup = pp.t4 - pp.t3;
-            long contextBuild = pp.t5 - pp.t4;
-            long openaiApi = t6 - pp.t5;
+            long vectorSearch = pp.t1 - pp.t0;
+            long rerank = pp.t2 - pp.t1;
+            long contextBuild = pp.t3 - pp.t2;
+            long openaiApi = t6 - pp.t3;
             long postProcess = t7 - t6;
 
             TIMING_LOG.info("TIMING: [Q: \"{}\"]", question.getQuestion());
-            TIMING_LOG.info("  NCTID Extraction:    {}ms ({}s)", nctidExtract, String.format("%.2f", nctidExtract / 1000.0));
             TIMING_LOG.info("  Vector Search:       {}ms ({}s)", vectorSearch, String.format("%.2f", vectorSearch / 1000.0));
             TIMING_LOG.info("  Re-ranking:          {}ms ({}s)", rerank, String.format("%.2f", rerank / 1000.0));
-            TIMING_LOG.info("  NCTID DB Lookup:     {}ms ({}s)", nctidLookup, String.format("%.2f", nctidLookup / 1000.0));
             TIMING_LOG.info("  Context Building:    {}ms ({}s)", contextBuild, String.format("%.2f", contextBuild / 1000.0));
             TIMING_LOG.info("  OpenAI API Call:     {}ms ({}s)", openaiApi, String.format("%.2f", openaiApi / 1000.0));
             TIMING_LOG.info("  Post-processing:     {}ms ({}s)", postProcess, String.format("%.2f", postProcess / 1000.0));
@@ -290,19 +269,6 @@ public class ChatControllerOpenAI {
                                 String processed = wrapFilenamesInResponse(
                                         fullResponse.toString(), ppFinal.usedFilenames);
 
-                                // NCTID extraction and session storage
-                                List<String> responseNCTIDs = extractNCTIDs(processed);
-                                if (!responseNCTIDs.isEmpty()) {
-                                    Set<String> conversationNCTIDs = (Set<String>)
-                                            session.getAttribute("conversationNCTIDs");
-                                    if (conversationNCTIDs == null) {
-                                        conversationNCTIDs = new HashSet<>();
-                                    }
-                                    conversationNCTIDs.addAll(responseNCTIDs);
-                                    session.setAttribute("conversationNCTIDs", conversationNCTIDs);
-                                    LOG.info("STREAM - Stored {} NCTIDs in session", conversationNCTIDs.size());
-                                }
-
                                 // Send final done event with processed response
                                 emitter.send(SseEmitter.event().name("done")
                                         .data("{\"fullResponse\":\"" + escapeJson(processed) + "\"}"));
@@ -311,19 +277,15 @@ public class ChatControllerOpenAI {
                                 // Timing
                                 long t7 = System.currentTimeMillis();
                                 long total = t7 - ppFinal.t0;
-                                long openaiApi = t6 - ppFinal.t5;
+                                long openaiApi = t6 - ppFinal.t3;
                                 long postProcess = t7 - t6;
-                                long nctidExtract = ppFinal.t1 - ppFinal.t0;
-                                long vectorSearch = ppFinal.t2 - ppFinal.t1;
-                                long rerank = ppFinal.t3 - ppFinal.t2;
-                                long nctidLookup = ppFinal.t4 - ppFinal.t3;
-                                long contextBuild = ppFinal.t5 - ppFinal.t4;
+                                long vectorSearch = ppFinal.t1 - ppFinal.t0;
+                                long rerank = ppFinal.t2 - ppFinal.t1;
+                                long contextBuild = ppFinal.t3 - ppFinal.t2;
 
                                 TIMING_LOG.info("STREAM TIMING: [Q: \"{}\"]", question.getQuestion());
-                                TIMING_LOG.info("  NCTID Extraction:    {}ms ({}s)", nctidExtract, String.format("%.2f", nctidExtract / 1000.0));
                                 TIMING_LOG.info("  Vector Search:       {}ms ({}s)", vectorSearch, String.format("%.2f", vectorSearch / 1000.0));
                                 TIMING_LOG.info("  Re-ranking:          {}ms ({}s)", rerank, String.format("%.2f", rerank / 1000.0));
-                                TIMING_LOG.info("  NCTID DB Lookup:     {}ms ({}s)", nctidLookup, String.format("%.2f", nctidLookup / 1000.0));
                                 TIMING_LOG.info("  Context Building:    {}ms ({}s)", contextBuild, String.format("%.2f", contextBuild / 1000.0));
                                 TIMING_LOG.info("  OpenAI API Stream:   {}ms ({}s)", openaiApi, String.format("%.2f", openaiApi / 1000.0));
                                 TIMING_LOG.info("  Post-processing:     {}ms ({}s)", postProcess, String.format("%.2f", postProcess / 1000.0));
@@ -371,8 +333,6 @@ public class ChatControllerOpenAI {
             LOG.info("OpenAI - Cleared memory for conversation ID: {}", oldId);
 
             request.getSession().removeAttribute("openai_conversation_id");
-            request.getSession().removeAttribute("conversationNCTIDs");
-            LOG.info("OpenAI - Cleared session NCTIDs");
 
             String newId = "reset_" + System.currentTimeMillis();
             request.getSession().setAttribute("openai_conversation_id", newId);
@@ -401,32 +361,16 @@ public class ChatControllerOpenAI {
         String systemMessage;
         Set<String> usedFilenames;
         boolean isEmpty;
-        long t0, t1, t2, t3, t4, t5;
+        long t0, t1, t2, t3;
     }
 
     /**
-     * Shared pre-processing: NCTID extraction, vector search, re-ranking, context building.
+     * Shared pre-processing: vector search, re-ranking, context building.
      * Used by both chat() and chatStream().
      */
     private PreProcessResult preProcess(Question question, HttpServletRequest request) {
         PreProcessResult result = new PreProcessResult();
         result.t0 = System.currentTimeMillis();
-
-        // Extract NCTIDs from current question
-        List<String> currentNCTIDs = extractNCTIDs(question.getQuestion());
-
-        // Get NCTIDs from previous conversation (stored in session)
-        Set<String> allNCTIDs = new HashSet<>(currentNCTIDs);
-        Set<String> sessionNCTIDs = (Set<String>) request.getSession().getAttribute("conversationNCTIDs");
-        if (sessionNCTIDs != null && !sessionNCTIDs.isEmpty()) {
-            allNCTIDs.addAll(sessionNCTIDs);
-            LOG.info("Retrieved {} NCTIDs from session: {}", sessionNCTIDs.size(), sessionNCTIDs);
-        }
-
-        if (!allNCTIDs.isEmpty()) {
-            LOG.info("Found {} unique NCTIDs in conversation (current + session): {}", allNCTIDs.size(), allNCTIDs);
-        }
-        result.t1 = System.currentTimeMillis();
 
         // STAGE 1: Broad retrieval - Get top 80 candidates from semantic search WITH SCORES
         List<Document> candidates;
@@ -442,7 +386,7 @@ public class ChatControllerOpenAI {
                             .withTopK(80)
                             .withSimilarityThreshold(0.35));
         }
-        result.t2 = System.currentTimeMillis();
+        result.t1 = System.currentTimeMillis();
         LOG.info("Stage 1: Retrieved {} candidates from semantic similarity search", candidates.size());
 
         // STAGE 2: Re-rank using semantic + keyword scoring
@@ -452,21 +396,8 @@ public class ChatControllerOpenAI {
         if (documents.size() > 40) {
             documents = documents.subList(0, 40);
         }
-        result.t3 = System.currentTimeMillis();
+        result.t2 = System.currentTimeMillis();
         LOG.info("Stage 2: Re-ranked and selected top {} documents", documents.size());
-
-        // Add documents for all mentioned NCTIDs (current question + conversation history)
-        if (!allNCTIDs.isEmpty()) {
-            int initialSize = documents.size();
-            for (String nctid : allNCTIDs) {
-                List<Document> nctidDocs = getDocumentsByNCTID(nctid);
-                documents.addAll(nctidDocs);
-            }
-            int addedCount = documents.size() - initialSize;
-            LOG.info("Added {} documents for {} NCTIDs mentioned in conversation", addedCount, allNCTIDs.size());
-        }
-
-        result.t4 = System.currentTimeMillis();
         LOG.info("OpenAI - Total documents for context: {}", documents.size());
 
         if (documents.isEmpty()) {
@@ -479,9 +410,6 @@ public class ChatControllerOpenAI {
         result.usedFilenames = new HashSet<>();
         for (Document doc : documents) {
             String filename = doc.getMetadata().getOrDefault("filename", "unknown").toString();
-            if (filename.startsWith("NCT") && filename.contains(":")) {
-                filename = filename.split(":")[0];
-            }
             if (!filename.equals("unknown")) {
                 result.usedFilenames.add(filename);
             }
@@ -605,7 +533,7 @@ public class ChatControllerOpenAI {
         - If no files were used, write exactly:
           SOURCES_USED: None
         """, contextBuilder);
-        result.t5 = System.currentTimeMillis();
+        result.t3 = System.currentTimeMillis();
 
         return result;
     }
@@ -627,44 +555,6 @@ public class ChatControllerOpenAI {
     }
 
     /**
-     * Extract NCTIDs from question text (e.g., NCT06285643)
-     */
-    private List<String> extractNCTIDs(String question) {
-        List<String> nctids = new ArrayList<>();
-        if (question == null || question.trim().isEmpty()) {
-            return nctids;
-        }
-
-        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("NCT\\d+");
-        java.util.regex.Matcher matcher = pattern.matcher(question);
-        while (matcher.find()) {
-            nctids.add(matcher.group());
-        }
-        return nctids;
-    }
-
-    /**
-     * Get documents by NCTID directly from database
-     */
-    private List<Document> getDocumentsByNCTID(String nctid) {
-        String filename = "CLINICAL TRIAL: " + nctid;
-        List<DocumentEmbeddingOpenAI> docs = repository.findByFileName(filename);
-
-        LOG.debug("Direct lookup for NCTID {}: found {} documents", nctid, docs.size());
-
-        return docs.stream()
-                .map(de -> {
-                    Map<String, Object> metadata = Map.of(
-                            "filename", de.getFileName(),
-                            "id", de.getId(),
-                            "created_at", de.getCreatedAt()
-                    );
-                    return new Document(de.getChunk(), metadata);
-                })
-                .collect(java.util.stream.Collectors.toList());
-    }
-
-    /**
      * Extract meaningful query terms (removing stop words)
      */
     private Set<String> extractQueryTerms(String query) {
@@ -677,22 +567,27 @@ public class ChatControllerOpenAI {
                                        "this", "these", "those", "be", "been", "being",
                                        "have", "has", "had", "do", "does", "did");
 
-        // Split query into words and filter
+        // First, preserve original whitespace-split tokens (keeps special chars like / - )
+        // This ensures "BN/NHsdMcwi", "SS/JrHsdMcwi", "Tp53" stay intact as search terms
+        String[] rawTokens = query.trim().split("\\s+");
+        for (String token : rawTokens) {
+            String lower = token.toLowerCase();
+            // Strip trailing punctuation (commas, periods, question marks)
+            lower = lower.replaceAll("[,\\.\\?!;:]+$", "");
+            if (lower.length() > 2 && !stopWords.contains(lower)) {
+                terms.add(lower);
+            }
+        }
+
+        // Also add cleaned/split sub-words for partial matching
         String[] words = query.toLowerCase()
-                .replaceAll("[^a-z0-9\\s]", " ") // Replace punctuation with space
+                .replaceAll("[^a-z0-9\\s]", " ")
                 .split("\\s+");
 
         for (String word : words) {
             if (word.length() > 2 && !stopWords.contains(word)) {
                 terms.add(word);
             }
-        }
-
-        // Extract NCTIDs (case-insensitive match, case-sensitive store)
-        java.util.regex.Pattern nctPattern = java.util.regex.Pattern.compile("(?i)NCT\\d+");
-        java.util.regex.Matcher nctMatcher = nctPattern.matcher(query);
-        while (nctMatcher.find()) {
-            terms.add(nctMatcher.group().toUpperCase());
         }
 
         LOG.debug("Extracted query terms: {}", terms);
