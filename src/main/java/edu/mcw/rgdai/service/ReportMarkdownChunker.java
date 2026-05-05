@@ -65,6 +65,16 @@ public class ReportMarkdownChunker {
         List<String> chunks = new ArrayList<>();
         String[] lines = markdown.split("\n", -1);
 
+        // Detect strain report from <!-- file_name: --> comment
+        boolean isStrainReport = false;
+        for (String l : lines) {
+            String t = l.trim();
+            if (t.startsWith("<!-- file_name:") && t.endsWith("-->")) {
+                isStrainReport = t.toLowerCase().contains("strain");
+                break;
+            }
+        }
+
         // Heading breadcrumb: level -> heading text (sorted by level)
         TreeMap<Integer, String> headingStack = new TreeMap<>();
 
@@ -73,6 +83,9 @@ public class ReportMarkdownChunker {
         String tableHeader = null;
         List<String> pendingHeaderLines = new ArrayList<>();
         boolean seenSeparator = false;
+
+        // Column stripping for strain reports (Reference Nucleotide column)
+        int stripColIndex = -1;
 
         for (String line : lines) {
             // Skip HTML comments (the <!-- file_name: ... --> line)
@@ -99,6 +112,7 @@ public class ReportMarkdownChunker {
                 tableHeader = null;
                 pendingHeaderLines.clear();
                 seenSeparator = false;
+                stripColIndex = -1;
 
                 // Update heading stack: clear this level and all deeper levels
                 int level = m.group(1).length();
@@ -106,6 +120,26 @@ public class ReportMarkdownChunker {
                 headingStack.tailMap(level).clear();
                 headingStack.put(level, text);
             } else {
+                // Strain reports: detect and strip Reference Nucleotide column
+                if (isStrainReport && isTableRow(trimmed)) {
+                    // Detect column index from header row (before separator)
+                    if (!seenSeparator && stripColIndex == -1 && trimmed.contains("Reference Nucleotide")) {
+                        String[] cols = trimmed.split("\\|", -1);
+                        for (int ci = 0; ci < cols.length; ci++) {
+                            if (cols[ci].contains("Reference Nucleotide")) {
+                                stripColIndex = ci;
+                                LOG.info("Stripping Reference Nucleotide column (index {}) from strain report", ci);
+                                break;
+                            }
+                        }
+                    }
+                    // Strip the column from this row
+                    if (stripColIndex >= 0) {
+                        line = removeColumn(line, stripColIndex);
+                        trimmed = line.trim();
+                    }
+                }
+
                 // Content line — add to current section
                 sectionLines.add(line);
 
@@ -338,6 +372,20 @@ public class ReportMarkdownChunker {
             sb.append("#".repeat(e.getKey())).append(" ").append(e.getValue());
         }
         return sb.toString();
+    }
+
+    /**
+     * Remove a column from a markdown table row by index.
+     * Splits on "|", removes the column at the given index, and rejoins.
+     */
+    private String removeColumn(String line, int colIndex) {
+        String[] cols = line.split("\\|", -1);
+        if (colIndex < 0 || colIndex >= cols.length) return line;
+        List<String> kept = new ArrayList<>();
+        for (int i = 0; i < cols.length; i++) {
+            if (i != colIndex) kept.add(cols[i]);
+        }
+        return String.join("|", kept);
     }
 
     /** Check if a line is a markdown table row (starts and ends with |). */
