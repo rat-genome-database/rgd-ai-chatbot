@@ -372,11 +372,11 @@ public class ChatControllerOpenAI {
         PreProcessResult result = new PreProcessResult();
         result.t0 = System.currentTimeMillis();
 
-        // STAGE 1: Broad retrieval - Get top 80 candidates from semantic search WITH SCORES
+        // STAGE 1: Hybrid retrieval - Vector search + BM25 full-text search, merged with RRF
         List<Document> candidates;
         if (openaiVectorStore instanceof PostgresVectorStoreOpenAI) {
-            PostgresVectorStoreOpenAI vectorStoreWithScores = (PostgresVectorStoreOpenAI) openaiVectorStore;
-            candidates = vectorStoreWithScores.similaritySearchWithScores(
+            PostgresVectorStoreOpenAI vectorStore = (PostgresVectorStoreOpenAI) openaiVectorStore;
+            candidates = vectorStore.hybridSearch(
                     SearchRequest.query(question.getQuestion())
                             .withTopK(80)
                             .withSimilarityThreshold(0.35));
@@ -387,7 +387,7 @@ public class ChatControllerOpenAI {
                             .withSimilarityThreshold(0.35));
         }
         result.t1 = System.currentTimeMillis();
-        LOG.info("Stage 1: Retrieved {} candidates from semantic similarity search", candidates.size());
+        LOG.info("Stage 1: Retrieved {} candidates from hybrid search (vector + file-name match)", candidates.size());
 
         // STAGE 2: Re-rank using semantic + keyword scoring
         List<Document> documents = rerankDocuments(candidates, question.getQuestion());
