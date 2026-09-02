@@ -26,6 +26,12 @@ import java.util.regex.Pattern;
  * 6. Handles oversized lines (>1000 tokens) by splitting at link boundaries
  *
  * Non-report markdown files should use the standard TokenTextSplitter instead.
+ *
+ * <p>Mirrored in rgd-ai-chatbot-rag-pipeline as
+ * {@code edu.mcw.rgd.chatBotEmbed.chunker.ReportMarkdownChunker}. The same markdown files can be
+ * embedded by either project (this service's Server Files flow, or the pipeline's
+ * {@code --mode embed}), so the two must chunk identically — keep them in sync when either
+ * changes, or the same report yields different chunks depending on which path embedded it.</p>
  */
 @Service
 public class ReportMarkdownChunker {
@@ -148,7 +154,12 @@ public class ReportMarkdownChunker {
                 // Content line — add to current section
                 sectionLines.add(line);
 
-                // Table header detection: track lines before |---| separator
+                // Table header detection. Two shapes are supported:
+                //   1. GitHub tables with a |---| separator — header = the row(s) above it.
+                //   2. Separator-less tables (what rgd-ai-chatbot-rag-pipeline emits) — the
+                //      first row of the table run is the header.
+                // Either way tableHeader is re-prepended to every fragment when a large table
+                // is split across chunks (see splitSection), so split tables keep their columns.
                 if (isTableRow(trimmed)) {
                     if (!seenSeparator && isTableSeparator(trimmed)) {
                         // Found the separator — everything before this is the header
@@ -161,7 +172,11 @@ public class ReportMarkdownChunker {
                         tableHeader = hdr.toString();
                         pendingHeaderLines.clear();
                     } else if (!seenSeparator) {
-                        // Potential header rows (before separator)
+                        // First row of a separator-less table — treat it as the header.
+                        // If a separator does follow, the branch above overrides this.
+                        if (tableHeader == null && pendingHeaderLines.isEmpty()) {
+                            tableHeader = line;
+                        }
                         pendingHeaderLines.add(line);
                     }
                 } else {

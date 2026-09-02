@@ -61,6 +61,9 @@
     <div id="chatArea">
         <div id="header">
             <h2>RGD AI Assistant</h2>
+            <%if((request.getServerName().equals("localhost")) || (request.getServerName().equals("dev.rgd.mcw.edu")) || (request.getServerName().equals("pipelines.rgd.mcw.edu"))){%>
+            <a href="<%= contextPath %>/curation" target="_blank" class="curation-link">Curation</a>
+            <%}%>
         </div>
 
         <div id="disclaimer">
@@ -96,12 +99,9 @@
                 text-decoration: none !important;
             }
         </style>
-        <div id="controls">
-            <a href="<%= contextPath %>/curation" target="_blank" class="curation-link">Curation</a>
-        </div>
         <%}%>
         <div class="input-area">
-            <textarea id="userInput" placeholder="Ask a question..." rows="3"></textarea>
+            <textarea id="userInput" placeholder="Ask a question..." rows="1"></textarea>
             <button id="typedTextSubmit" class="submit-btn">Send</button>
         </div>
     </div>

@@ -496,6 +496,13 @@ public class ChatControllerOpenAI {
              where <type> is lowercase (gene, qtl, strain, variant, marker, reference).
            - Example: Source "RGD Gene Report - A2m (2004)" produces link:
              [A2m on RGD](https://rgd.mcw.edu/rgdweb/report/gene/main.html?id=2004)
+           - ONTOLOGY REPORT PAGES: Ontology terms use a different URL pattern
+             based on the ontology accession ID (e.g. an ID like "DOID:0001816"
+             or "GO:0008150"), not the numeric RGD_ID.
+           - URL pattern: https://rgd.mcw.edu/rgdweb/ontology/annot.html?acc_id=<ONT_ACC>
+             where <ONT_ACC> is the ontology accession ID.
+           - Example: An ontology term with accession "DOID:0001816" produces link:
+             [angiosarcoma](https://rgd.mcw.edu/rgdweb/ontology/annot.html?acc_id=DOID:0001816)
            - IMPORTANT: The context may contain markdown hyperlinks like
              [Gene Symbol](https://rgd.mcw.edu/...) for genes, QTLs, strains,
              markers, and other entities. When you mention these entities in

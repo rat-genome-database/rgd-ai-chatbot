@@ -314,6 +314,7 @@ const submitTypedText = (event) => {
         postQuestion(typedText);
     }
     typedTextInput.value = '';
+    typedTextInput.style.height = 'auto';
     return false;
 };
 
@@ -362,6 +363,25 @@ const initUIEvents = () => {
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             submitTypedText(e);
+        }
+    });
+
+    // Auto-grow the textarea to fit its content
+    const autoResizeTextarea = () => {
+        textarea.style.height = 'auto';
+        textarea.style.height = textarea.scrollHeight + 'px';
+    };
+    textarea.addEventListener('input', autoResizeTextarea);
+    autoResizeTextarea();
+
+    // Force every link in a response to open in a new tab so the user
+    // never navigates away and loses the conversation
+    const transcript = document.querySelector('#transcript');
+    transcript.addEventListener('click', e => {
+        const link = e.target.closest('a');
+        if (link && link.href) {
+            e.preventDefault();
+            window.open(link.href, '_blank', 'noopener');
         }
     });
 
