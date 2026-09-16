@@ -33,7 +33,7 @@ const handleResponse = (response) => {
     let enhancedAnswer = marked.parse(response.answer);
     enhancedAnswer = convertNCTToLinks(enhancedAnswer);
     enhancedAnswer = convertMdToLinks(enhancedAnswer);
-    enhancedAnswer = boldSourcesUsed(enhancedAnswer);
+    enhancedAnswer = formatRelatedLinks(enhancedAnswer);
     enhancedAnswer = cleanupClinicalTrialSources(enhancedAnswer);
     addToTranscript("AI", enhancedAnswer);
 };
@@ -90,13 +90,20 @@ const convertMdToLinks = (text) => {
     });
 };
 
-// Function to make "SOURCES_USED:" bold and format properly
-const boldSourcesUsed = (text) => {
-    // Add line break before SOURCES_USED if it's not already on its own line
-    // Also add spaces after commas in the sources list
-    return text.replace(/([^\n])\s*SOURCES_USED:\s*/g, '$1<strong class="sources-label">SOURCES USED:</strong> ')
-               .replace(/SOURCES_USED:\s*/g, '<strong class="sources-label">SOURCES USED:</strong> ')
-               .replace(/,(?=\S)/g, ', '); // Add space after comma if there isn't one
+// Function to format the "Related Links" footer of an AI response.
+// Wraps the label AND the link list that follows in one span so both can be
+// styled together. SOURCES_USED is the legacy token, still matched so older
+// responses keep rendering correctly.
+const formatRelatedLinks = (text) => {
+    return text.replace(
+        /(?:RELATED_LINKS|SOURCES_USED|SOURCES USED):\s*([\s\S]*?)(<\/p>|$)/,
+        (match, list, tail) =>
+            '<span class="related-links"><strong class="sources-label">Related Links:</strong> '
+            // Space out the comma-separated filenames. Scoped to the link list on
+            // purpose: applying it to the whole response reformats every number in
+            // it, turning coordinates like 11,334,906 into "11, 334, 906".
+            + list.replace(/,(?=\S)/g, ', ')
+            + '</span>' + tail);
 };
 
 // Function to remove "CLINICAL TRIAL" prefix from sources (handles all AI format variations)
@@ -245,7 +252,7 @@ const postQuestionStream = (question) => {
                             let preProcessed = convertMdToLinks(payload.fullResponse);
                             let enhanced = marked.parse(preProcessed);
                             enhanced = convertNCTToLinks(enhanced);
-                            enhanced = boldSourcesUsed(enhanced);
+                            enhanced = formatRelatedLinks(enhanced);
                             enhanced = cleanupClinicalTrialSources(enhanced);
                             streamSpan.innerHTML = enhanced;
                         } catch (e) {

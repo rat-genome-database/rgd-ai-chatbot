@@ -14,6 +14,10 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
 import org.springframework.ai.chat.memory.InMemoryChatMemory;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
@@ -32,7 +36,9 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import org.springframework.ai.openai.OpenAiChatOptions;
@@ -45,25 +51,62 @@ public class ChatControllerOpenAI {
     private static final Logger TIMING_LOG = LoggerFactory.getLogger("TIMING");
 
     private ChatClient chatClient;
+    private ChatClient rewriteClient;
     private final VectorStore openaiVectorStore;
     private final String configuredModel;
+    private final String rewriteModel;
+    private final boolean rewriteEnabled;
+    private final int rewriteHistoryMessages;
+    private final boolean fanoutEnabled;
+    private final int fanoutMaxEntities;
+    private final int fanoutMaxDocs;
+    private final int fanoutMinDocsPerEntity;
+    private final int fanoutMaxDocsPerEntity;
+    private final int maxContextDocs;
+    private final String corpusCoverageNote;
+    private static final ObjectMapper JSON = new ObjectMapper();
     private InMemoryChatMemory chatMemory;
     private final ChatModel openAiChatModel;
     private final DocumentEmbeddingOpenAIRepository repository;
     private final RecaptchaService recaptchaService;
     private static final String CHAT_MEMORY_CONVERSATION_ID_KEY = "chat_memory_conversation_id";
     private final ExecutorService streamExecutor = Executors.newCachedThreadPool();
+    private final ExecutorService fanoutExecutor;
 
     public ChatControllerOpenAI(
             ApplicationContext context,
             @Qualifier("openaiVectorStore") VectorStore openaiVectorStore,
             @Value("${spring.ai.openai.model}") String configuredModel,
+            @Value("${chatbot.query-rewrite.model:gpt-4o-mini}") String rewriteModel,
+            @Value("${chatbot.query-rewrite.enabled:true}") boolean rewriteEnabled,
+            @Value("${chatbot.query-rewrite.history-messages:8}") int rewriteHistoryMessages,
+            @Value("${chatbot.fanout.enabled:true}") boolean fanoutEnabled,
+            @Value("${chatbot.fanout.max-entities:25}") int fanoutMaxEntities,
+            @Value("${chatbot.fanout.max-docs:60}") int fanoutMaxDocs,
+            @Value("${chatbot.fanout.min-docs-per-entity:2}") int fanoutMinDocsPerEntity,
+            @Value("${chatbot.fanout.max-docs-per-entity:8}") int fanoutMaxDocsPerEntity,
+            @Value("${chatbot.fanout.threads:5}") int fanoutThreads,
+            @Value("${chatbot.retrieval.max-context-docs:40}") int maxContextDocs,
+            @Value("${chatbot.corpus.coverage-note}") String corpusCoverageNote,
             DocumentEmbeddingOpenAIRepository repository,
             RecaptchaService recaptchaService) {
 
         LOG.info("Initializing OpenAI ChatController with system messages for doc context");
         this.openaiVectorStore = openaiVectorStore;
         this.configuredModel = configuredModel;
+        this.rewriteModel = rewriteModel;
+        this.rewriteEnabled = rewriteEnabled;
+        this.rewriteHistoryMessages = rewriteHistoryMessages;
+        this.fanoutEnabled = fanoutEnabled;
+        this.fanoutMaxEntities = fanoutMaxEntities;
+        this.fanoutMaxDocs = fanoutMaxDocs;
+        this.fanoutMinDocsPerEntity = fanoutMinDocsPerEntity;
+        this.fanoutMaxDocsPerEntity = fanoutMaxDocsPerEntity;
+        // Bounded on purpose: each fan-out search is an embedding API call plus a DB
+        // query, and a 25-entity question would otherwise open 25 of each at once.
+        this.fanoutExecutor = Executors.newFixedThreadPool(Math.max(1, fanoutThreads));
+        this.maxContextDocs = maxContextDocs;
+        this.corpusCoverageNote = corpusCoverageNote;
         this.repository = repository;
         this.recaptchaService = recaptchaService;
         this.chatMemory = new InMemoryChatMemory();
@@ -85,7 +128,11 @@ public class ChatControllerOpenAI {
         }
         this.openAiChatModel = foundModel;
         this.chatClient = buildClient(openAiChatModel, this.chatMemory);
+        // Deliberately advisor-free: the query-rewrite call must NOT be written into
+        // conversation memory, or rewritten queries would pollute the transcript.
+        this.rewriteClient = ChatClient.builder(openAiChatModel).build();
         LOG.info("OpenAI ChatClient initialized successfully with model: {}", configuredModel);
+        LOG.info("Query rewriting enabled={} using model: {}", rewriteEnabled, rewriteModel);
     }
 
     private ChatClient buildClient(ChatModel model, InMemoryChatMemory memory) {
@@ -113,11 +160,7 @@ public class ChatControllerOpenAI {
         }
 
         try {
-            PreProcessResult pp = preProcess(question, request);
-
-            if (pp.isEmpty) {
-                return new Answer("I don't have information about that topic in my knowledge base.");
-            }
+            PreProcessResult pp = preProcess(question, request, conversationId);
 
             String response = chatClient.prompt()
                     .system(pp.systemMessage)
@@ -141,13 +184,15 @@ public class ChatControllerOpenAI {
 
             // Log timing summary
             long total = t7 - pp.t0;
-            long vectorSearch = pp.t1 - pp.t0;
+            long queryRewrite = pp.tRewrite - pp.t0;
+            long vectorSearch = pp.t1 - pp.tRewrite;
             long rerank = pp.t2 - pp.t1;
             long contextBuild = pp.t3 - pp.t2;
             long openaiApi = t6 - pp.t3;
             long postProcess = t7 - t6;
 
-            TIMING_LOG.info("TIMING: [Q: \"{}\"]", question.getQuestion());
+            TIMING_LOG.info("TIMING: [Q: \"{}\"] [Search Q: \"{}\"]", question.getQuestion(), pp.searchQuery);
+            TIMING_LOG.info("  Query Rewrite:       {}ms ({}s)", queryRewrite, String.format("%.2f", queryRewrite / 1000.0));
             TIMING_LOG.info("  Vector Search:       {}ms ({}s)", vectorSearch, String.format("%.2f", vectorSearch / 1000.0));
             TIMING_LOG.info("  Re-ranking:          {}ms ({}s)", rerank, String.format("%.2f", rerank / 1000.0));
             TIMING_LOG.info("  Context Building:    {}ms ({}s)", contextBuild, String.format("%.2f", contextBuild / 1000.0));
@@ -195,7 +240,7 @@ public class ChatControllerOpenAI {
         // Pre-processing (synchronous - vector search, re-ranking, context building)
         PreProcessResult pp;
         try {
-            pp = preProcess(question, request);
+            pp = preProcess(question, request, conversationId);
         } catch (Exception e) {
             LOG.error("OpenAI STREAM - Error in pre-processing: {}", e.getMessage(), e);
             streamExecutor.execute(() -> {
@@ -205,20 +250,6 @@ public class ChatControllerOpenAI {
                     emitter.complete();
                 } catch (IOException ex) {
                     emitter.completeWithError(ex);
-                }
-            });
-            return emitter;
-        }
-
-        if (pp.isEmpty) {
-            streamExecutor.execute(() -> {
-                try {
-                    String msg = "I don't have information about that topic in my knowledge base.";
-                    emitter.send(SseEmitter.event().name("done")
-                            .data("{\"fullResponse\":\"" + escapeJson(msg) + "\"}"));
-                    emitter.complete();
-                } catch (IOException e) {
-                    emitter.completeWithError(e);
                 }
             });
             return emitter;
@@ -279,11 +310,13 @@ public class ChatControllerOpenAI {
                                 long total = t7 - ppFinal.t0;
                                 long openaiApi = t6 - ppFinal.t3;
                                 long postProcess = t7 - t6;
-                                long vectorSearch = ppFinal.t1 - ppFinal.t0;
+                                long queryRewrite = ppFinal.tRewrite - ppFinal.t0;
+                                long vectorSearch = ppFinal.t1 - ppFinal.tRewrite;
                                 long rerank = ppFinal.t2 - ppFinal.t1;
                                 long contextBuild = ppFinal.t3 - ppFinal.t2;
 
-                                TIMING_LOG.info("STREAM TIMING: [Q: \"{}\"]", question.getQuestion());
+                                TIMING_LOG.info("STREAM TIMING: [Q: \"{}\"] [Search Q: \"{}\"]", question.getQuestion(), ppFinal.searchQuery);
+                                TIMING_LOG.info("  Query Rewrite:       {}ms ({}s)", queryRewrite, String.format("%.2f", queryRewrite / 1000.0));
                                 TIMING_LOG.info("  Vector Search:       {}ms ({}s)", vectorSearch, String.format("%.2f", vectorSearch / 1000.0));
                                 TIMING_LOG.info("  Re-ranking:          {}ms ({}s)", rerank, String.format("%.2f", rerank / 1000.0));
                                 TIMING_LOG.info("  Context Building:    {}ms ({}s)", contextBuild, String.format("%.2f", contextBuild / 1000.0));
@@ -355,59 +388,323 @@ public class ChatControllerOpenAI {
     }
 
     /**
+     * Rewrite a follow-up question into a standalone retrieval query using conversation
+     * history.
+     *
+     * Retrieval embeds the query text directly, so an anaphoric follow-up such as
+     * "are there any others" or "why did you not find those" carries no entities and
+     * matches nothing above the similarity threshold. This resolves those references
+     * against the recent transcript before the vector search runs.
+     *
+     * Falls back to the original question on any failure - a degraded query is far
+     * better than a failed request.
+     */
+    /**
+     * Single hybrid (vector + full-text) retrieval pass.
+     */
+    private List<Document> runSearch(String query, int topK) {
+        SearchRequest req = SearchRequest.query(query)
+                .withTopK(topK)
+                .withSimilarityThreshold(0.35);
+        if (openaiVectorStore instanceof PostgresVectorStoreOpenAI) {
+            return ((PostgresVectorStoreOpenAI) openaiVectorStore).hybridSearch(req);
+        }
+        return openaiVectorStore.similaritySearch(req);
+    }
+
+    /**
+     * Stable per-chunk key for de-duplicating hits across fan-out searches.
+     */
+    private Object docKey(Document doc) {
+        Object id = doc.getMetadata().get("id");
+        return (id != null) ? id : doc.getContent();
+    }
+
+    /**
+     * Run one retrieval per named record and merge the results, giving every record its
+     * own share of the context budget.
+     *
+     * A single search for a question naming 20+ symbols embeds to a centroid near none of
+     * them and returns unrelated material, even though each report is indexed and answers
+     * perfectly when asked about on its own. Splitting the search guarantees every record
+     * actually gets looked up.
+     */
+    private List<Document> fanoutRetrieve(List<String> entities, String fullQuery) {
+        int perEntity = Math.max(fanoutMinDocsPerEntity,
+                Math.min(fanoutMaxDocsPerEntity, fanoutMaxDocs / entities.size()));
+
+        LOG.info("Fan-out retrieval: {} entities, up to {} chunks each", entities.size(), perEntity);
+
+        LinkedHashMap<Object, Document> merged = new LinkedHashMap<>();
+
+        // Run the per-entity searches concurrently. Done sequentially, a 22-gene question
+        // would be 22 embedding calls plus 22 DB queries back to back, which would dominate
+        // the response time on its own.
+        List<CompletableFuture<List<Document>>> futures = new ArrayList<>();
+        for (String entity : entities) {
+            futures.add(CompletableFuture.supplyAsync(() -> {
+                try {
+                    List<Document> hits = runSearch(entity, Math.max(perEntity * 4, 20));
+                    if (hits.isEmpty()) {
+                        LOG.info("Fan-out: no hits for entity \"{}\"", entity);
+                        return new ArrayList<Document>();
+                    }
+                    List<Document> ranked = rerankDocuments(hits, entity);
+                    List<Document> kept = new ArrayList<>(
+                            ranked.subList(0, Math.min(perEntity, ranked.size())));
+                    LOG.info("Fan-out: entity \"{}\" -> {} hits, kept {}",
+                            entity, hits.size(), kept.size());
+                    return kept;
+                } catch (Exception e) {
+                    LOG.warn("Fan-out search failed for entity \"{}\": {}", entity, e.getMessage());
+                    return new ArrayList<Document>();
+                }
+            }, fanoutExecutor));
+        }
+
+        // Drain in submission order so the merged context is deterministic.
+        for (CompletableFuture<List<Document>> future : futures) {
+            try {
+                for (Document doc : future.join()) {
+                    merged.putIfAbsent(docKey(doc), doc);
+                }
+            } catch (Exception e) {
+                LOG.warn("Fan-out task failed: {}", e.getMessage());
+            }
+        }
+
+        // Top up with results for the question as a whole, so shared or general context
+        // (the QTL the genes sit in, for instance) is not lost.
+        if (merged.size() < fanoutMaxDocs) {
+            try {
+                List<Document> general = rerankDocuments(runSearch(fullQuery, 40), fullQuery);
+                for (Document doc : general) {
+                    if (merged.size() >= fanoutMaxDocs) {
+                        break;
+                    }
+                    merged.putIfAbsent(docKey(doc), doc);
+                }
+            } catch (Exception e) {
+                LOG.warn("Fan-out top-up search failed: {}", e.getMessage());
+            }
+        }
+
+        LOG.info("Fan-out retrieval merged into {} unique chunks", merged.size());
+        return new ArrayList<>(merged.values());
+    }
+
+    /**
+     * Result of the pre-retrieval query analysis step.
+     */
+    private static class QueryAnalysis {
+        String searchQuery;
+        List<String> entities = new ArrayList<>();
+    }
+
+    /**
+     * Analyze the user's message before retrieval. Does two jobs in one cheap model call:
+     *
+     * 1. REWRITE - resolve a follow-up into a standalone query. Retrieval embeds the query
+     *    text directly, so "are there any others" or "list the genes from above" carries no
+     *    entities and matches nothing above the similarity threshold.
+     *
+     * 2. ENTITY EXTRACTION - pull out the individual genes/QTLs/strains named. A question
+     *    listing 22 gene symbols embeds to a centroid that sits near none of them, so a
+     *    single search returns unrelated material even though every one of those reports is
+     *    indexed. The entity list lets preProcess fan out one search per entity instead.
+     *
+     * Falls back to the original question with no entities on any failure - a degraded
+     * query beats a failed request.
+     */
+    private QueryAnalysis analyzeQuery(String question, String conversationId) {
+        QueryAnalysis analysis = new QueryAnalysis();
+        analysis.searchQuery = question;
+
+        if (!rewriteEnabled) {
+            return analysis;
+        }
+
+        StringBuilder transcript = new StringBuilder();
+        try {
+            List<Message> history = chatMemory.get(conversationId, rewriteHistoryMessages);
+            if (history != null) {
+                for (Message m : history) {
+                    String role = (m.getMessageType() == MessageType.USER) ? "User" : "Assistant";
+                    String content = m.getContent();
+                    if (content == null || content.isBlank()) {
+                        continue;
+                    }
+                    // Cap each turn: assistant answers run long and only the entities matter here.
+                    if (content.length() > 1500) {
+                        content = content.substring(0, 1500) + " ...";
+                    }
+                    transcript.append(role).append(": ").append(content).append("\n\n");
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not read chat memory for query analysis: {}", e.getMessage());
+        }
+
+        String historyBlock = transcript.length() == 0
+                ? "(none - this is the first question of the conversation)"
+                : transcript.toString();
+
+        String analysisSystem = """
+        You prepare a user's message for a document retrieval system covering Rat Genome
+        Database (RGD) records: genes, QTLs, strains, variants, markers, references,
+        ontology terms, and annotations.
+
+        Reply with ONLY a JSON object, no markdown fences and no commentary:
+        {"query": "<standalone search query>", "entities": ["<name>", "..."]}
+
+        "query" RULES:
+        - Resolve all pronouns and implicit references ("they", "those", "any others",
+          "it", "that gene", "the list above") using the conversation history.
+        - Preserve entity names, symbols, and identifiers EXACTLY as written
+          (for example: LH/Mav, C17h6orf52, Nkx6-1, BN-Chr 13^LH/MavRrrc).
+        - Carry forward the subject under discussion when the latest message omits it.
+        - If the latest message is a meta question about the conversation itself
+          (for example "why did you not find those earlier"), rewrite it into a content
+          query for the entities that were being discussed.
+        - If the message is already standalone, repeat it unchanged.
+        - Keep it under 40 words.
+
+        "entities" RULES:
+        - List every specific named record the user is asking about: gene symbols, QTL
+          symbols, strain names, marker names, RGD IDs.
+        - Include entities carried over from the conversation history when the latest
+          message refers to them without naming them.
+        - Copy each name EXACTLY as it should be searched. No descriptions, no duplicates.
+        - Use [] when the question is general and names no specific records
+          (for example "what QTL are on rat chromosome 14").
+        - Never invent a name that appears neither in the message nor the history.
+
+        CONVERSATION HISTORY:
+        ---------------------
+        %s---------------------
+        """.formatted(historyBlock);
+
+        try {
+            String raw = rewriteClient.prompt()
+                    .system(analysisSystem)
+                    .user(question)
+                    .options(OpenAiChatOptions.builder()
+                            .withModel(rewriteModel)
+                            .withTemperature(0.0)
+                            .build())
+                    .call()
+                    .content();
+
+            if (raw == null || raw.isBlank()) {
+                LOG.warn("Query analysis returned empty, using original question");
+                return analysis;
+            }
+
+            // Tolerate a model that wraps the object in markdown fences or prose.
+            int start = raw.indexOf('{');
+            int end = raw.lastIndexOf('}');
+            if (start < 0 || end <= start) {
+                LOG.warn("Query analysis returned no JSON object, using original question");
+                return analysis;
+            }
+
+            JsonNode node = JSON.readTree(raw.substring(start, end + 1));
+
+            String rewritten = node.path("query").asText("").trim();
+            if (!rewritten.isBlank()) {
+                analysis.searchQuery = rewritten;
+            }
+
+            JsonNode entities = node.path("entities");
+            if (entities.isArray()) {
+                Set<String> seen = new HashSet<>();
+                for (JsonNode entity : entities) {
+                    String name = entity.asText("").trim();
+                    if (name.isBlank() || name.length() > 100) {
+                        continue;
+                    }
+                    if (seen.add(name.toLowerCase())) {
+                        analysis.entities.add(name);
+                    }
+                    if (analysis.entities.size() >= fanoutMaxEntities) {
+                        LOG.info("Entity list truncated at {} entries", fanoutMaxEntities);
+                        break;
+                    }
+                }
+            }
+
+            LOG.info("Query analysis: \"{}\" -> \"{}\" | entities={}",
+                    question, analysis.searchQuery, analysis.entities);
+            return analysis;
+
+        } catch (Exception e) {
+            LOG.error("Query analysis failed, falling back to original question: {}", e.getMessage(), e);
+            analysis.searchQuery = question;
+            analysis.entities.clear();
+            return analysis;
+        }
+    }
+
+    /**
      * Holds the result of pre-processing: system message, filenames, and timing milestones.
      */
     private static class PreProcessResult {
         String systemMessage;
         Set<String> usedFilenames;
+        String searchQuery;
         boolean isEmpty;
-        long t0, t1, t2, t3;
+        long t0, tRewrite, t1, t2, t3;
     }
 
     /**
      * Shared pre-processing: vector search, re-ranking, context building.
      * Used by both chat() and chatStream().
      */
-    private PreProcessResult preProcess(Question question, HttpServletRequest request) {
+    private PreProcessResult preProcess(Question question, HttpServletRequest request, String conversationId) {
         PreProcessResult result = new PreProcessResult();
         result.t0 = System.currentTimeMillis();
 
-        // STAGE 1: Hybrid retrieval - Vector search + BM25 full-text search, merged with RRF
-        List<Document> candidates;
-        if (openaiVectorStore instanceof PostgresVectorStoreOpenAI) {
-            PostgresVectorStoreOpenAI vectorStore = (PostgresVectorStoreOpenAI) openaiVectorStore;
-            candidates = vectorStore.hybridSearch(
-                    SearchRequest.query(question.getQuestion())
-                            .withTopK(80)
-                            .withSimilarityThreshold(0.35));
+        // STAGE 0: Resolve follow-ups into a standalone query and pull out the specific
+        // records being asked about.
+        QueryAnalysis analysis = analyzeQuery(question.getQuestion(), conversationId);
+        String searchQuery = analysis.searchQuery;
+        result.searchQuery = searchQuery;
+        result.tRewrite = System.currentTimeMillis();
+
+        // STAGES 1+2: Retrieve and re-rank. A question naming several records gets one
+        // search per record - a single embedding of 20+ symbols lands near none of them.
+        List<Document> documents;
+        if (fanoutEnabled && analysis.entities.size() >= 2) {
+            documents = fanoutRetrieve(analysis.entities, searchQuery);
+            result.t1 = System.currentTimeMillis();
+            result.t2 = result.t1;
         } else {
-            candidates = openaiVectorStore.similaritySearch(
-                    SearchRequest.query(question.getQuestion())
-                            .withTopK(80)
-                            .withSimilarityThreshold(0.35));
-        }
-        result.t1 = System.currentTimeMillis();
-        LOG.info("Stage 1: Retrieved {} candidates from hybrid search (vector + file-name match)", candidates.size());
+            List<Document> candidates = runSearch(searchQuery, 80);
+            result.t1 = System.currentTimeMillis();
+            LOG.info("Stage 1: Retrieved {} candidates from hybrid search (vector + file-name match)", candidates.size());
 
-        // STAGE 2: Re-rank using semantic + keyword scoring
-        List<Document> documents = rerankDocuments(candidates, question.getQuestion());
-
-        // Take top 40 after re-ranking
-        if (documents.size() > 40) {
-            documents = documents.subList(0, 40);
+            documents = rerankDocuments(candidates, searchQuery);
+            if (documents.size() > maxContextDocs) {
+                documents = documents.subList(0, maxContextDocs);
+            }
+            result.t2 = System.currentTimeMillis();
         }
-        result.t2 = System.currentTimeMillis();
         LOG.info("Stage 2: Re-ranked and selected top {} documents", documents.size());
         LOG.info("OpenAI - Total documents for context: {}", documents.size());
 
-        if (documents.isEmpty()) {
-            result.isEmpty = true;
-            return result;
+        // No documents is NOT a dead end: the model still has the conversation history
+        // and may be able to answer from earlier turns or ask a clarifying question.
+        result.isEmpty = documents.isEmpty();
+        if (result.isEmpty) {
+            LOG.info("No documents retrieved for query \"{}\" - falling back to history-only answer", searchQuery);
         }
 
         // Build context and collect filenames
         StringBuilder contextBuilder = new StringBuilder();
         result.usedFilenames = new HashSet<>();
+        if (documents.isEmpty()) {
+            contextBuilder.append("(No documents were retrieved from the knowledge base for this question.)\n\n");
+        }
         for (Document doc : documents) {
             String filename = doc.getMetadata().getOrDefault("filename", "unknown").toString();
             if (!filename.equals("unknown")) {
@@ -415,7 +712,13 @@ public class ChatControllerOpenAI {
             }
             contextBuilder.append(String.format("--- FROM: %s ---\n%s\n\n", filename, doc.getContent()));
         }
-
+        /*
+        * add to How to answer: that if user asks about an object and does not provide a species,
+        * report back to the user which species they want to know about. Provide a list of species that have that object.
+        * If they ask for all, then look at the context documents of the gene for all species.
+        * If there is only one available in the context documents, then give an answer about that one.
+        *
+         */
         result.systemMessage = String.format("""
         You are RatChat, a friendly, helpful AI assistant made available by the
         Rat Genome Database (RGD) at the Medical College of Wisconsin (MCW).
@@ -457,14 +760,28 @@ public class ChatControllerOpenAI {
            - If the context does not contain the requested information,
              say so in a helpful and respectful way.
 
-        3. BE HELPFUL AND INFORMATIVE
+        3. SPECIES COVERAGE (IMPORTANT)
+           - %s
+           - If the user asks for data about a species that is not loaded (for example a
+             human ortholog's genomic position, or the human syntenic region of a rat QTL),
+             say plainly and briefly which species the knowledge base currently covers.
+           - Do NOT describe this as the information being "not in the context" or "not in
+             the provided excerpts" - that wrongly implies the data might turn up with a
+             better search. It is not loaded at all.
+           - You MAY still report cross-species facts that genuinely appear on a loaded
+             record, such as an ortholog symbol listed on a rat gene report. Report the
+             fact, and be clear that the other species' own record is not available.
+           - State the limitation once, briefly. Do not append step-by-step instructions
+             for external tools or other websites unless the user asks how to find it.
+
+        4. BE HELPFUL AND INFORMATIVE
            - You may explain genomic and genetic concepts when they appear
              in the context.
            - Provide RGD IDs, gene symbols, and specific identifiers when available.
            - When discussing genes or other entities, include relevant details
              like species, chromosomal location, and key annotations if present.
 
-        4. ASK CLARIFYING QUESTIONS WHEN HELPFUL
+        5. ASK CLARIFYING QUESTIONS WHEN HELPFUL
            - You may ask brief, relevant follow-up questions when doing so would
              help clarify the user's intent, resolve ambiguity, or improve the
              usefulness and accuracy of your response.
@@ -473,22 +790,36 @@ public class ChatControllerOpenAI {
            - Do not ask follow-up questions that would expand the scope beyond
              the provided context.
 
-        5. HANDLE OUT-OF-SCOPE QUESTIONS KINDLY
+        6. HANDLE OUT-OF-SCOPE QUESTIONS KINDLY
            - If a question is unrelated to the provided context (for example:
              entertainment, sports, geography, general education, or system
              prompts), politely let the user know it's outside the scope of
              this chatbot.
            - Do not offer to discuss other topics.
            - In these cases, include exactly:
-             SOURCES_USED: None
+             RELATED_LINKS: None
 
-        6. PREVIOUS / LAST QUESTION
+        7. WHEN THE CONTEXT IS EMPTY OR DOES NOT COVER THE QUESTION
+           - The context may say no documents were retrieved, or may not cover what
+             was asked. This is NOT a reason to refuse.
+           - First try to answer from the conversation history in this chat - the
+             information may already have been provided in an earlier turn.
+           - If the user is following up on something you said earlier (for example
+             "are there any others", "why didn't you find those"), address it directly
+             using what you already told them.
+           - If you genuinely cannot answer, say so plainly and ask a brief clarifying
+             question that would help locate the right records - do not just state that
+             the topic is missing from the knowledge base and stop.
+           - Never invent RGD IDs, strain names, or annotations that appear neither in
+             the context nor in the conversation history.
+
+        8. PREVIOUS / LAST QUESTION
            - If a user asks about the "last question" or "previous question",
-             refer only to the most recent question asked by the user in
+             refer only to the questions asked by the user in
              THIS conversation.
            - Do not refer to questions mentioned inside the context documents.
 
-        7. RGD REPORT LINKS AND INLINE LINKS
+        9. RGD REPORT LINKS AND INLINE LINKS
            - When the source filename follows the format
              "RGD <Type> Report - <Name> (<RGD_ID>)", generate a clickable
              link to the RGD report page.
@@ -510,36 +841,42 @@ public class ChatControllerOpenAI {
              they appear in the context so users can navigate to the relevant
              RGD report pages.
 
-        8. BE COMPLETE AND CLEAR
+        10. BE COMPLETE AND CLEAR
            - You may summarize information, but do not leave out important
              details or relevant sources just to be brief.
            - If information is missing, unclear, or not stated in the context,
              explain that plainly.
 
-        9. AVOID ASSUMPTIONS
+        11. AVOID ASSUMPTIONS
            - Do not infer outcomes, effectiveness, safety conclusions, or
              regulatory meaning beyond what is explicitly stated.
 
-        10. DOCUMENT REFERENCES
+        12. DOCUMENT REFERENCES
            When mentioning a document name in your response, wrap it in
            double brackets using the EXACT filename from the
            "--- FROM: filename ---" headers as-is (do NOT add or remove
            any extension).
            Example: [[RGD Gene Report - A2m (2004)]]
 
-        SOURCE REPORTING (REQUIRED):
+        RELATED LINKS (REQUIRED):
 
         At the end of every response, include:
 
-        SOURCES_USED: <comma-separated list>
+        RELATED_LINKS: <comma-separated list>
 
         Guidelines:
-        - List only the files you actually used to answer the question.
+        - List ONLY the files you drew a specific stated fact from.
+        - A file being present in the context is NOT a reason to list it. Listing
+          everything in the context, or a long list of files you did not quote, is wrong.
+        - If your answer says the information is unavailable, not loaded, or could not be
+          found, then you used no files - write exactly:
+          RELATED_LINKS: None
+        - Never list a file whose contents you did not actually use.
         - Use exact filenames from the "--- FROM: filename ---" markers.
         - Separate multiple filenames with commas and no spaces.
         - If no files were used, write exactly:
-          SOURCES_USED: None
-        """, contextBuilder);
+          RELATED_LINKS: None
+        """, contextBuilder, corpusCoverageNote);
         result.t3 = System.currentTimeMillis();
 
         return result;

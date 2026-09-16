@@ -243,10 +243,20 @@ body {
     margin: 0.15em 0;
 }
 
-/* Sources Used label formatting */
-.AIEntry .sources-label {
+/* Related Links footer - label + link list, 2px smaller than body copy */
+.AIEntry .related-links {
     display: inline-block;
     margin-top: 0.7em;
+    font-size: 14px;
+    line-height: 1.45;
+}
+
+.AIEntry .related-links a {
+    font-size: inherit;
+}
+
+.AIEntry .sources-label {
+    display: inline-block;
 }
 
 .RGDEntry {
