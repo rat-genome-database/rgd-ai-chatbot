@@ -66,7 +66,7 @@
             <%}%>
         </div>
 
-        <div id="disclaimer">
+        <div id="disclaimer" class="collapsed">
             <div id="disclaimerHeader">
                 <span class="disclaimer-arrow">&#9660;</span>
                 <strong>Disclaimer</strong>
