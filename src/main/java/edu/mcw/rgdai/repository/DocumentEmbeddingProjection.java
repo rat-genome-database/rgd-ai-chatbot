@@ -13,4 +13,10 @@ public interface DocumentEmbeddingProjection {
     String getFileName();
     LocalDateTime getCreatedAt();
     Double getSimilarityScore();
+
+    /** Null for chunks embedded before the metadata columns existed, or reports with no numeric RGD ID. */
+    Long getRgdId();
+
+    /** Heading path the chunk came from; null when it carries no breadcrumb. */
+    String getSection();
 }

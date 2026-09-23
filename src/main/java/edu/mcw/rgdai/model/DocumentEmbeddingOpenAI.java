@@ -26,7 +26,35 @@ public class DocumentEmbeddingOpenAI {
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
+    /** The object this chunk's report describes; null for reports with no numeric RGD ID. */
+    @Column(name = "rgd_id")
+    private Long rgdId;
+
+    /**
+     * Heading path this chunk came from, e.g. {@code "## Genomic Position"}. Declared as
+     * text to match the column — leaving it to the default would have Hibernate expect a
+     * varchar(255) and, under ddl-auto=update, complain about the existing column.
+     */
+    @Column(name = "section", columnDefinition = "text")
+    private String section;
+
     public DocumentEmbeddingOpenAI() {}
+
+    public Long getRgdId() {
+        return rgdId;
+    }
+
+    public void setRgdId(Long rgdId) {
+        this.rgdId = rgdId;
+    }
+
+    public String getSection() {
+        return section;
+    }
+
+    public void setSection(String section) {
+        this.section = section;
+    }
 
     // Getters and Setters
     public Long getId() {

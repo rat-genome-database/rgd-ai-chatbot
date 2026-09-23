@@ -3,6 +3,7 @@ package edu.mcw.rgdai.config;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -21,6 +22,10 @@ public class VectorStoreConfig {
 
     @Autowired
     private ApplicationContext context;
+
+    /** Lexical arm of the hybrid search; false restores pure vector + file-name behaviour. */
+    @Value("${chatbot.full-text.enabled:true}")
+    private boolean fullTextEnabled;
 
     @PostConstruct
     public void debugBeans() {
@@ -67,7 +72,10 @@ public class VectorStoreConfig {
             throw new RuntimeException("Could not find OpenAI embedding model! Available beans: " + embeddingModels.keySet());
         }
 
-        return new PostgresVectorStoreOpenAI(repository, openAiModel);
+        PostgresVectorStoreOpenAI store = new PostgresVectorStoreOpenAI(repository, openAiModel);
+        store.setFullTextEnabled(fullTextEnabled);
+        System.out.println("OpenAI VectorStore full-text arm enabled: " + fullTextEnabled);
+        return store;
     }
 }
 //package edu.mcw.rgdai.config;

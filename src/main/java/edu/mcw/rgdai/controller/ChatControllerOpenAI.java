@@ -1,9 +1,14 @@
 package edu.mcw.rgdai.controller;
 
+import edu.mcw.rgd.dao.impl.DocumentEmbeddingDAO;
+import edu.mcw.rgd.datamodel.ReportObjectDE;
+import edu.mcw.rgd.datamodel.ReportPositionDE;
 import edu.mcw.rgdai.model.Answer;
 import edu.mcw.rgdai.model.Question;
 import edu.mcw.rgdai.model.DocumentEmbeddingOpenAI;
 import edu.mcw.rgdai.repository.DocumentEmbeddingOpenAIRepository;
+import edu.mcw.rgdai.repository.RegionMemberProjection;
+import edu.mcw.rgdai.repository.SymbolSpeciesProjection;
 import edu.mcw.rgdai.vectorstore.PostgresVectorStoreOpenAI;
 import edu.mcw.rgdai.service.RecaptchaService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -37,6 +42,7 @@ import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -63,6 +69,14 @@ public class ChatControllerOpenAI {
     private final int fanoutMinDocsPerEntity;
     private final int fanoutMaxDocsPerEntity;
     private final int maxContextDocs;
+    private final boolean exactLookupEnabled;
+    /** Sections kept out of the candidate set unless the question is about a region. */
+    private final List<String> excludedSections;
+    /** Object types whose tables are fully populated, so an exhaustive answer is trustworthy. */
+    private final List<String> enumerationTypes;
+    private final String enumerationAssembly;
+    private final boolean speciesDisambiguationEnabled;
+    private final DocumentEmbeddingDAO reportDAO = new DocumentEmbeddingDAO();
     private final String corpusCoverageNote;
     private static final ObjectMapper JSON = new ObjectMapper();
     private InMemoryChatMemory chatMemory;
@@ -87,7 +101,12 @@ public class ChatControllerOpenAI {
             @Value("${chatbot.fanout.max-docs-per-entity:8}") int fanoutMaxDocsPerEntity,
             @Value("${chatbot.fanout.threads:5}") int fanoutThreads,
             @Value("${chatbot.retrieval.max-context-docs:40}") int maxContextDocs,
-            @Value("${chatbot.corpus.coverage-note}") String corpusCoverageNote,
+            @Value("${chatbot.exact-lookup.enabled:true}") boolean exactLookupEnabled,
+            @Value("${chatbot.retrieval.excluded-sections:}") String excludedSectionsCsv,
+            @Value("${chatbot.enumeration.object-types:}") String enumerationTypesCsv,
+            @Value("${chatbot.enumeration.default-assembly:GRCr8}") String enumerationAssembly,
+            @Value("${chatbot.species-disambiguation.enabled:true}") boolean speciesDisambiguationEnabled,
+            @Value("${chatbot.corpus.coverage-note:The knowledge base currently contains RAT (Rattus norvegicus) records ONLY. Human, mouse and all other species are not loaded yet.}") String corpusCoverageNote,
             DocumentEmbeddingOpenAIRepository repository,
             RecaptchaService recaptchaService) {
 
@@ -106,6 +125,13 @@ public class ChatControllerOpenAI {
         // query, and a 25-entity question would otherwise open 25 of each at once.
         this.fanoutExecutor = Executors.newFixedThreadPool(Math.max(1, fanoutThreads));
         this.maxContextDocs = maxContextDocs;
+        this.exactLookupEnabled = exactLookupEnabled;
+        // Section names contain commas nowhere, so a plain CSV split is safe and keeps the
+        // list editable in config as the corpus grows new boilerplate sections.
+        this.excludedSections = List.copyOf(splitCsv(excludedSectionsCsv));
+        this.enumerationTypes = List.copyOf(splitCsv(enumerationTypesCsv));
+        this.enumerationAssembly = enumerationAssembly;
+        this.speciesDisambiguationEnabled = speciesDisambiguationEnabled;
         this.corpusCoverageNote = corpusCoverageNote;
         this.repository = repository;
         this.recaptchaService = recaptchaService;
@@ -133,6 +159,20 @@ public class ChatControllerOpenAI {
         this.rewriteClient = ChatClient.builder(openAiChatModel).build();
         LOG.info("OpenAI ChatClient initialized successfully with model: {}", configuredModel);
         LOG.info("Query rewriting enabled={} using model: {}", rewriteEnabled, rewriteModel);
+    }
+
+    /** Split a comma-separated config value, dropping blanks. Never returns null. */
+    private static List<String> splitCsv(String csv) {
+        List<String> values = new ArrayList<>();
+        if (csv != null) {
+            for (String s : csv.split(",")) {
+                String trimmed = s.trim();
+                if (!trimmed.isEmpty()) {
+                    values.add(trimmed);
+                }
+            }
+        }
+        return values;
     }
 
     private ChatClient buildClient(ChatModel model, InMemoryChatMemory memory) {
@@ -400,14 +440,302 @@ public class ChatControllerOpenAI {
      * better than a failed request.
      */
     /**
+     * Resolve a model-supplied object type to the exact spelling stored in {@code report_object}.
+     *
+     * <p>{@code object_type} is compared case-sensitively in SQL, but the type arrives from the
+     * query-analysis model, which may well answer "QTL" or "genes" where the column holds
+     * "Qtl" and "Gene". Matching the configured list case-insensitively and then querying with
+     * the CONFIGURED spelling keeps a harmless wording difference from turning into an empty
+     * result that quietly falls back to ordinary retrieval.</p>
+     *
+     * @return the configured spelling, or null when the type is not enabled
+     */
+    private String canonicalObjectType(String rawType) {
+        if (rawType == null || rawType.isBlank()) {
+            return null;
+        }
+        String trimmed = rawType.trim();
+        for (String configured : enumerationTypes) {
+            if (configured.equalsIgnoreCase(trimmed)) {
+                return configured;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Answer "what lies in the region of X" with real coordinates.
+     *
+     * <p>A gene report's "QTLs in Region" table names the overlapping QTLs but carries none of
+     * their positions — those live on each QTL's own report. Asked for the positions of the
+     * QTLs around A2m, retrieval can therefore only ever produce the names, and the assistant
+     * correctly but unhelpfully explains that the coordinates are not in the excerpt. Resolving
+     * the anchor's span and intersecting it against {@code report_position} answers it outright.</p>
+     *
+     * <p>Gated on the same populated-types list as enumeration: a partial overlap list reads
+     * just as authoritative as a complete one.</p>
+     *
+     * @return a formatted table to prepend to the context, or null to retrieve normally
+     */
+    private String tryRegionOverlap(QueryAnalysis analysis) {
+        if (!analysis.regionQuery
+                || analysis.regionAnchor == null || analysis.regionAnchor.isBlank()
+                || analysis.regionTargetType == null || analysis.regionTargetType.isBlank()) {
+            return null;
+        }
+
+        String targetType = canonicalObjectType(analysis.regionTargetType);
+        if (targetType == null) {
+            LOG.info("Region overlap wanted '{}' but that type is not enabled " +
+                    "(chatbot.enumeration.object-types={}) - retrieving normally",
+                    analysis.regionTargetType, enumerationTypes);
+            return null;
+        }
+
+        String assembly = (analysis.enumAssembly == null || analysis.enumAssembly.isBlank())
+                ? enumerationAssembly : analysis.enumAssembly.trim();
+        String anchorSymbol = analysis.regionAnchor.trim();
+
+        try {
+            List<RegionMemberProjection> anchors = repository.findAnchorPosition(anchorSymbol, assembly);
+            if (anchors.isEmpty()) {
+                LOG.info("Region anchor '{}' has no position on {} - retrieving normally",
+                        anchorSymbol, assembly);
+                return null;
+            }
+            if (anchors.size() > 1) {
+                // Several records share the symbol; picking one would silently answer about the
+                // wrong organism. Species disambiguation handles asking which was meant.
+                LOG.info("Region anchor '{}' matches {} records - leaving it to disambiguation",
+                        anchorSymbol, anchors.size());
+                return null;
+            }
+
+            RegionMemberProjection anchor = anchors.get(0);
+            if (anchor.getChromosome() == null || anchor.getStartPos() == null || anchor.getStopPos() == null) {
+                return null;
+            }
+
+            List<RegionMemberProjection> members = repository.findOverlappingInRegion(
+                    targetType, assembly, anchor.getChromosome(),
+                    anchor.getStartPos(), anchor.getStopPos());
+            if (members.isEmpty()) {
+                LOG.info("No {} overlaps {} on {} - retrieving normally", targetType, anchorSymbol, assembly);
+                return null;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format(
+                    "--- COMPLETE DATABASE LIST: every %s overlapping %s (%s chr%s:%d-%d, %s) ---%n",
+                    targetType, anchor.getSymbol(), assembly, anchor.getChromosome(),
+                    anchor.getStartPos(), anchor.getStopPos(), assembly));
+            sb.append("| Symbol | Name | Start | Stop |\n");
+            for (RegionMemberProjection m : members) {
+                sb.append(String.format("| %s | %s | %s | %s |%n",
+                        m.getSymbol(),
+                        m.getName() == null ? "" : m.getName(),
+                        m.getStartPos() == null ? "" : m.getStartPos().toString(),
+                        m.getStopPos() == null ? "" : m.getStopPos().toString()));
+            }
+            sb.append(String.format("Total: %d%n--- END COMPLETE DATABASE LIST ---%n%n", members.size()));
+
+            LOG.info("Region overlap: {} {}(s) overlap {} on {} chr{}",
+                    members.size(), targetType, anchor.getSymbol(), assembly, anchor.getChromosome());
+            return sb.toString();
+
+        } catch (Exception e) {
+            LOG.error("Region overlap query failed, falling back to retrieval: {}", e.getMessage(), e);
+            return null;
+        }
+    }
+
+    /**
+     * Tell the model which species each named record exists for, so it can ask instead of guess.
+     *
+     * <p>"Where is Mapk10" has no single right answer once more than one species is loaded —
+     * the rat and human genes sit in different places. Rather than silently picking whichever
+     * species retrieval happened to surface, the available species are put in front of the
+     * model and it asks which one the user meant.</p>
+     *
+     * <p>Costs one indexed query and only produces a note when a symbol is genuinely ambiguous.
+     * With a single-species corpus nothing is ever ambiguous, so this stays silent and the
+     * behaviour is unchanged — it wakes up on its own as other species load.</p>
+     *
+     * @return a note to prepend to the context, or null when nothing is ambiguous
+     */
+    private String speciesDisambiguation(List<String> entities) {
+        if (!speciesDisambiguationEnabled || entities == null || entities.isEmpty()) {
+            return null;
+        }
+
+        Set<String> lowered = new LinkedHashSet<>();
+        for (String e : entities) {
+            if (e != null && !e.isBlank()) {
+                lowered.add(e.trim().toLowerCase());
+            }
+        }
+        if (lowered.isEmpty()) {
+            return null;
+        }
+
+        try {
+            // Keyed on the stored spelling, so the note shows the symbol as RGD writes it
+            // rather than however the user happened to type it.
+            Map<String, Set<String>> speciesBySymbol = new LinkedHashMap<>();
+            for (SymbolSpeciesProjection row : repository.findSpeciesBySymbols(lowered)) {
+                speciesBySymbol
+                        .computeIfAbsent(row.getSymbol(), k -> new LinkedHashSet<>())
+                        .add(row.getSpecies());
+            }
+
+            boolean anyAmbiguous = speciesBySymbol.values().stream().anyMatch(s -> s.size() > 1);
+            if (!anyAmbiguous) {
+                return null;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("--- SPECIES AVAILABLE FOR THE NAMED RECORDS ---\n");
+            for (Map.Entry<String, Set<String>> e : speciesBySymbol.entrySet()) {
+                sb.append(String.format("%s: %s%n", e.getKey(), String.join(", ", e.getValue())));
+            }
+            sb.append("--- END SPECIES AVAILABLE ---\n\n");
+
+            LOG.info("Species disambiguation: {} of {} named record(s) exist for more than one species",
+                    speciesBySymbol.values().stream().filter(s -> s.size() > 1).count(),
+                    speciesBySymbol.size());
+            return sb.toString();
+
+        } catch (Exception e) {
+            LOG.error("Species lookup failed, answering without disambiguation: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Answer "every X on chromosome Y" from the object tables instead of from retrieval.
+     *
+     * <p>Similarity search cannot do this correctly at any topK: a QTL report averages ~64
+     * chunks, so chromosome 14's QTLs do not fit in a 40-chunk context however it is tuned.
+     * The assistant then answers confidently from whatever fraction it retrieved — it once
+     * listed 12 of the 52 QTL actually on chromosome 14.</p>
+     *
+     * <p>Only runs for object types named in {@code chatbot.enumeration.object-types}. That
+     * gate exists because a complete-sounding answer from a half-populated table is worse
+     * than no answer at all: until a type is fully backfilled, "there are no genes on
+     * chromosome 14" would be both confident and false. An empty result also falls back
+     * rather than asserting emptiness.</p>
+     *
+     * @return a formatted table to prepend to the context, or null to retrieve normally
+     */
+    private String tryEnumeration(QueryAnalysis analysis) {
+        if (!analysis.enumeration
+                || analysis.enumObjectType == null || analysis.enumObjectType.isBlank()
+                || analysis.enumChromosome == null || analysis.enumChromosome.isBlank()) {
+            return null;
+        }
+
+        String objectType = canonicalObjectType(analysis.enumObjectType);
+        if (objectType == null) {
+            LOG.info("Enumeration requested for '{}' but that type is not enabled " +
+                    "(chatbot.enumeration.object-types={}) - retrieving normally",
+                    analysis.enumObjectType, enumerationTypes);
+            return null;
+        }
+
+        String assembly = (analysis.enumAssembly == null || analysis.enumAssembly.isBlank())
+                ? enumerationAssembly : analysis.enumAssembly.trim();
+        String chromosome = analysis.enumChromosome.trim();
+
+        try {
+            List<ReportObjectDE> objects =
+                    reportDAO.getObjectsOnChromosome(objectType, assembly, chromosome);
+            if (objects.isEmpty()) {
+                LOG.info("Enumeration for {} on chr{} ({}) returned nothing - falling back to retrieval",
+                        objectType, chromosome, assembly);
+                return null;
+            }
+
+            // Both queries order by start_pos and the (rgd_id, assembly) key means at most one
+            // position per object here, so the map is a safe way to pair them up.
+            Map<Long, ReportPositionDE> positions = new HashMap<>();
+            for (ReportPositionDE p : reportDAO.getPositionsOnChromosome(objectType, assembly, chromosome)) {
+                positions.put(p.getRgdId(), p);
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format(
+                    "--- COMPLETE DATABASE LIST: every %s on chromosome %s (%s) ---%n",
+                    objectType, chromosome, assembly));
+            sb.append("| Symbol | Name | Start | Stop |\n");
+            for (ReportObjectDE o : objects) {
+                ReportPositionDE p = positions.get(o.getRgdId());
+                sb.append(String.format("| %s | %s | %s | %s |%n",
+                        o.getSymbol(),
+                        o.getName() == null ? "" : o.getName(),
+                        p == null || p.getStartPos() == null ? "" : p.getStartPos().toString(),
+                        p == null || p.getStopPos() == null ? "" : p.getStopPos().toString()));
+            }
+            sb.append(String.format("Total: %d%n--- END COMPLETE DATABASE LIST ---%n%n", objects.size()));
+
+            LOG.info("Enumeration: {} {}(s) on chr{} ({}) returned from the database, ordered by position",
+                    objects.size(), objectType, chromosome, assembly);
+            return sb.toString();
+
+        } catch (Exception e) {
+            LOG.error("Enumeration query failed, falling back to retrieval: {}", e.getMessage(), e);
+            return null;
+        }
+    }
+
+    /**
+     * Fetch chunks for named records by exact symbol, skipping similarity search entirely.
+     *
+     * <p>Returns empty when the feature is off, no records were named, the store does not
+     * support it, or nothing resolved — every one of which means the caller should fall
+     * back to searching. Resolving only some of the named symbols still counts as a hit:
+     * partial exact results beat a centroid embedding that matches none of them.</p>
+     */
+    private List<Document> exactLookup(List<String> entities) {
+        if (!exactLookupEnabled || entities == null || entities.isEmpty()) {
+            return new ArrayList<>();
+        }
+        if (!(openaiVectorStore instanceof PostgresVectorStoreOpenAI)) {
+            return new ArrayList<>();
+        }
+
+        List<Document> hits = ((PostgresVectorStoreOpenAI) openaiVectorStore)
+                .findBySymbols(entities, null, null);
+
+        if (hits.isEmpty()) {
+            LOG.info("Exact lookup resolved none of {} named record(s) - falling back to search",
+                    entities.size());
+        } else {
+            Set<String> files = new HashSet<>();
+            for (Document d : hits) {
+                Object f = d.getMetadata().get("filename");
+                if (f != null) {
+                    files.add(f.toString());
+                }
+            }
+            LOG.info("Exact lookup: {} named record(s) -> {} chunk(s) from {} file(s), no embedding calls",
+                    entities.size(), hits.size(), files.size());
+        }
+        return hits;
+    }
+
+    /**
      * Single hybrid (vector + full-text) retrieval pass.
      */
     private List<Document> runSearch(String query, int topK) {
+        return runSearch(query, topK, excludedSections);
+    }
+
+    private List<Document> runSearch(String query, int topK, List<String> excluded) {
         SearchRequest req = SearchRequest.query(query)
                 .withTopK(topK)
                 .withSimilarityThreshold(0.35);
         if (openaiVectorStore instanceof PostgresVectorStoreOpenAI) {
-            return ((PostgresVectorStoreOpenAI) openaiVectorStore).hybridSearch(req);
+            return ((PostgresVectorStoreOpenAI) openaiVectorStore).hybridSearch(req, excluded);
         }
         return openaiVectorStore.similaritySearch(req);
     }
@@ -499,6 +827,23 @@ public class ChatControllerOpenAI {
     private static class QueryAnalysis {
         String searchQuery;
         List<String> entities = new ArrayList<>();
+        /** True when the user is asking what lies inside a region, which is exactly what the
+         *  normally-excluded region-listing sections contain. */
+        boolean regionQuery;
+
+        /** True when the user wants every record of a type on a chromosome, not a few examples. */
+        boolean enumeration;
+        /** Gene / Qtl / Strain, when the enumeration names one. */
+        String enumObjectType;
+        /** Chromosome the enumeration is scoped to, e.g. "14" or "X". */
+        String enumChromosome;
+        /** Assembly named in the question; blank means use the configured default. */
+        String enumAssembly;
+
+        /** The record whose region is being asked about, e.g. "A2m" in "QTLs in the A2m region". */
+        String regionAnchor;
+        /** What to list inside that region: Gene, Qtl or Strain. */
+        String regionTargetType;
     }
 
     /**
@@ -555,7 +900,10 @@ public class ChatControllerOpenAI {
         ontology terms, and annotations.
 
         Reply with ONLY a JSON object, no markdown fences and no commentary:
-        {"query": "<standalone search query>", "entities": ["<name>", "..."]}
+        {"query": "<standalone search query>", "entities": ["<name>", "..."],
+         "regionQuery": false, "regionAnchor": "", "regionTargetType": "",
+         "enumeration": false,
+         "enumObjectType": "", "enumChromosome": "", "enumAssembly": ""}
 
         "query" RULES:
         - Resolve all pronouns and implicit references ("they", "those", "any others",
@@ -578,6 +926,34 @@ public class ChatControllerOpenAI {
         - Use [] when the question is general and names no specific records
           (for example "what QTL are on rat chromosome 14").
         - Never invent a name that appears neither in the message nor the history.
+
+        "regionQuery" RULES:
+        - true when the user is asking what lies WITHIN a region or interval: which genes,
+          QTLs or markers are in a QTL's span, inside a chromosomal range, or overlapping
+          another record.
+        - false for everything else, including a question about one record's own position,
+          its annotations, or its description.
+        - Examples of true: "what genes are in the Niddm15 region",
+          "which QTLs overlap chr14:1-11Mb", "markers inside Mcs2".
+        - Examples of false: "where is Gpat3", "what is Niddm15",
+          "what diseases is Mcs2 associated with".
+        - When true, also set:
+          "regionAnchor" to the record whose region is meant (e.g. "A2m" for "the QTLs in
+          the region of A2m"), or "" if the region is given as raw coordinates;
+          "regionTargetType" to what is being listed inside it — Gene, Qtl or Strain.
+
+        "enumeration" RULES:
+        - true ONLY when the user wants EVERY record of one type on a whole chromosome —
+          "what QTL are on rat chromosome 14", "list all genes on chr 7", "how many
+          strains are on chromosome 2".
+        - false when the question is about one named record, a sub-interval of a
+          chromosome, or anything that is not an exhaustive list for a whole chromosome.
+        - When true, also set:
+          "enumObjectType" to exactly one of Gene, Qtl or Strain;
+          "enumChromosome" to the chromosome alone, with no "chr" prefix (e.g. "14", "X");
+          "enumAssembly" to the assembly if the user named one (e.g. "GRCr8"), else "".
+        - If you cannot fill in both the object type and the chromosome, set
+          "enumeration" to false.
 
         CONVERSATION HISTORY:
         ---------------------
@@ -633,8 +1009,17 @@ public class ChatControllerOpenAI {
                 }
             }
 
-            LOG.info("Query analysis: \"{}\" -> \"{}\" | entities={}",
-                    question, analysis.searchQuery, analysis.entities);
+            analysis.regionQuery = node.path("regionQuery").asBoolean(false);
+            analysis.enumeration = node.path("enumeration").asBoolean(false);
+            analysis.enumObjectType = node.path("enumObjectType").asText("").trim();
+            analysis.enumChromosome = node.path("enumChromosome").asText("").trim();
+            analysis.enumAssembly = node.path("enumAssembly").asText("").trim();
+            analysis.regionAnchor = node.path("regionAnchor").asText("").trim();
+            analysis.regionTargetType = node.path("regionTargetType").asText("").trim();
+
+            LOG.info("Query analysis: \"{}\" -> \"{}\" | entities={} | regionQuery={} | enumeration={} {} chr{}",
+                    question, analysis.searchQuery, analysis.entities, analysis.regionQuery,
+                    analysis.enumeration, analysis.enumObjectType, analysis.enumChromosome);
             return analysis;
 
         } catch (Exception e) {
@@ -671,15 +1056,49 @@ public class ChatControllerOpenAI {
         result.searchQuery = searchQuery;
         result.tRewrite = System.currentTimeMillis();
 
-        // STAGES 1+2: Retrieve and re-rank. A question naming several records gets one
-        // search per record - a single embedding of 20+ symbols lands near none of them.
+        // An exhaustive "every X on chromosome Y" is a database question, not a search one.
+        // Retrieval still runs underneath it: the list answers "which", the chunks answer
+        // any follow-on detail in the same question.
+        // Whole-chromosome list, or everything overlapping one record's span. Both are
+        // database questions that retrieval can only ever answer partially.
+        String enumerationTable = tryEnumeration(analysis);
+        if (enumerationTable == null) {
+            enumerationTable = tryRegionOverlap(analysis);
+        }
+
+        // Silent while one species is loaded; produces a note only when a named record
+        // genuinely exists for several.
+        String speciesNote = speciesDisambiguation(analysis.entities);
+
+        // STAGES 1+2: Retrieve and re-rank.
+        //
+        // Named records are fetched by symbol, not by similarity: the user told us which
+        // records they want, so that is an indexed lookup rather than a search. Fan-out
+        // stays as the fallback for names the lookup cannot resolve - an alias, a typo, or
+        // an object whose metadata has not been backfilled yet.
         List<Document> documents;
-        if (fanoutEnabled && analysis.entities.size() >= 2) {
+        List<Document> exact = exactLookup(analysis.entities);
+
+        if (!exact.isEmpty()) {
+            documents = exact;
+            if (documents.size() > fanoutMaxDocs) {
+                documents = documents.subList(0, fanoutMaxDocs);
+            }
+            result.t1 = System.currentTimeMillis();
+            result.t2 = result.t1;
+        } else if (fanoutEnabled && analysis.entities.size() >= 2) {
             documents = fanoutRetrieve(analysis.entities, searchQuery);
             result.t1 = System.currentTimeMillis();
             result.t2 = result.t1;
         } else {
-            List<Document> candidates = runSearch(searchQuery, 80);
+            // A region question is precisely the case the exclusions would break, so they
+            // are lifted for it rather than applied blindly.
+            List<String> excluded = analysis.regionQuery ? List.of() : excludedSections;
+            if (analysis.regionQuery && !excludedSections.isEmpty()) {
+                LOG.info("Region question - keeping region-listing sections in the candidate set");
+            }
+
+            List<Document> candidates = runSearch(searchQuery, 80, excluded);
             result.t1 = System.currentTimeMillis();
             LOG.info("Stage 1: Retrieved {} candidates from hybrid search (vector + file-name match)", candidates.size());
 
@@ -702,7 +1121,21 @@ public class ChatControllerOpenAI {
         // Build context and collect filenames
         StringBuilder contextBuilder = new StringBuilder();
         result.usedFilenames = new HashSet<>();
-        if (documents.isEmpty()) {
+
+        // First in the context, so the complete list is read before the sampled chunks that
+        // follow it and cannot be mistaken for just another retrieved excerpt.
+        // Ahead of everything else: whether the question is even answerable as asked comes
+        // before any material that might answer it.
+        if (speciesNote != null) {
+            contextBuilder.append(speciesNote);
+        }
+
+        if (enumerationTable != null) {
+            contextBuilder.append(enumerationTable);
+            result.isEmpty = false;
+        }
+
+        if (documents.isEmpty() && enumerationTable == null) {
             contextBuilder.append("(No documents were retrieved from the knowledge base for this question.)\n\n");
         }
         for (Document doc : documents) {
@@ -715,7 +1148,7 @@ public class ChatControllerOpenAI {
         /*
         * add to How to answer: that if user asks about an object and does not provide a species,
         * report back to the user which species they want to know about. Provide a list of species that have that object.
-        * If they ask for all, then look at the context documents of the gene for all species.
+        * If they ask for all, then look at the context documents of the object for all species.
         * If there is only one available in the context documents, then give an answer about that one.
         *
          */
@@ -857,6 +1290,32 @@ public class ChatControllerOpenAI {
            "--- FROM: filename ---" headers as-is (do NOT add or remove
            any extension).
            Example: [[RGD Gene Report - A2m (2004)]]
+
+        13. COMPLETE DATABASE LISTS
+           - A block marked "COMPLETE DATABASE LIST" is not a retrieved excerpt. It is the
+             full result of a direct database query, already ordered by chromosomal position.
+           - Treat it as authoritative and exhaustive for what it covers. Report every row,
+             or state the total and summarise — but never imply the list may be partial, and
+             never say it reflects only "the provided context".
+           - The context documents below it are supporting detail, not a second opinion. If
+             a document mentions a record the list does not contain, the list wins for
+             "what is on this chromosome".
+           - Preserve the given order; it is genomic order, not relevance order.
+           - If the question also asks about traits, diseases or other detail, answer that
+             from the context documents while still reporting the list in full.
+
+        14. WHICH SPECIES DID THEY MEAN
+           - A block marked "SPECIES AVAILABLE FOR THE NAMED RECORDS" lists, per symbol,
+             every species that record exists for in the knowledge base.
+           - If a record is listed for MORE THAN ONE species and the user did not say which
+             they meant, do not guess and do not silently answer for one of them. Ask which
+             species they want, naming the ones available for that record.
+           - If a record is listed for exactly ONE species, just answer for it. Do not ask a
+             question the data does not raise.
+           - If the user asks for all species, answer for each one the block lists, keeping
+             them clearly separated.
+           - If the user already named a species, use it and do not ask again.
+           - A symbol absent from the block is not ambiguous; answer normally.
 
         RELATED LINKS (REQUIRED):
 

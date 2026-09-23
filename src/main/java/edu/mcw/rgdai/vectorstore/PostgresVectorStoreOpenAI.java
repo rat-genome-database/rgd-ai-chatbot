@@ -1,6 +1,7 @@
 package edu.mcw.rgdai.vectorstore;
 
 import com.pgvector.PGvector;
+import edu.mcw.rgd.process.ReportMetadata;
 import edu.mcw.rgdai.model.DocumentEmbeddingOpenAI;
 import edu.mcw.rgdai.repository.DocumentEmbeddingOpenAIRepository;
 import edu.mcw.rgdai.repository.DocumentEmbeddingProjection;
@@ -46,10 +47,18 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
 
                 // Create and save the document embedding
                 DocumentEmbeddingOpenAI docEmbedding = new DocumentEmbeddingOpenAI();
+                String fileName = doc.getMetadata().getOrDefault("filename", "unknown").toString();
                 docEmbedding.setChunk(doc.getContent());
                 docEmbedding.setEmbedding(new PGvector(embedding));
-                docEmbedding.setFileName(doc.getMetadata().getOrDefault("filename", "unknown").toString());
+                docEmbedding.setFileName(fileName);
                 docEmbedding.setCreatedAt(LocalDateTime.now());
+
+                // Same metadata the pipeline writes. Without this, anything ingested through
+                // the chatbot's own upload or bulk-embed path would be invisible to exact
+                // symbol lookup and section filtering, even though its text embeds fine.
+                ReportMetadata.Identity identity = ReportMetadata.parseDisplayName(fileName);
+                docEmbedding.setRgdId(identity == null ? null : identity.rgdId);
+                docEmbedding.setSection(ReportMetadata.sectionOf(doc.getContent()));
 
                 repository.save(docEmbedding);
                 LOG.debug("Saved document chunk: {} characters from {}",
@@ -84,10 +93,11 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
             List<DocumentEmbeddingProjection> nearest;
             if (request.getSimilarityThreshold() > 0) {
                 nearest = repository.findNearestLightWithThreshold(
-                        queryEmbedding, request.getTopK(), request.getSimilarityThreshold());
+                        queryEmbedding, request.getTopK(), request.getSimilarityThreshold(),
+                        excludedOrSentinel(null));
                 LOG.info("Using similarity threshold: {}", request.getSimilarityThreshold());
             } else {
-                nearest = repository.findNearestLight(queryEmbedding, request.getTopK());
+                nearest = repository.findNearestLight(queryEmbedding, request.getTopK(), excludedOrSentinel(null));
             }
 
             LOG.info("Found {} documents in OpenAI database", nearest.size());
@@ -162,10 +172,11 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
             List<DocumentEmbeddingProjection> nearest;
             if (request.getSimilarityThreshold() > 0) {
                 nearest = repository.findNearestLightWithThreshold(
-                        queryEmbedding, request.getTopK(), request.getSimilarityThreshold());
+                        queryEmbedding, request.getTopK(), request.getSimilarityThreshold(),
+                        excludedOrSentinel(null));
                 LOG.info("Using similarity threshold: {}", request.getSimilarityThreshold());
             } else {
-                nearest = repository.findNearestLight(queryEmbedding, request.getTopK());
+                nearest = repository.findNearestLight(queryEmbedding, request.getTopK(), excludedOrSentinel(null));
             }
 
             LOG.info("Found {} documents in OpenAI database", nearest.size());
@@ -201,6 +212,102 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
     }
 
     /**
+     * Fetch chunks for records the user named outright, by exact symbol match.
+     *
+     * <p>Similarity search is the wrong instrument once a record is named: embedding a list
+     * of symbols produces a centroid near none of them, and each lookup costs an embedding
+     * call. This is a single indexed query that cannot miss a record present in the index.</p>
+     *
+     * @param symbols    record symbols; matched case-insensitively
+     * @param objectType optional Gene/Qtl/Strain filter, null for any
+     * @param section    optional section filter (e.g. "## Genomic Position"), null for all
+     * @return chunks in symbol order, empty when nothing resolves
+     */
+    @Transactional(readOnly = true)
+    public List<Document> findBySymbols(Collection<String> symbols, String objectType, String section) {
+        if (symbols == null || symbols.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        Set<String> lowered = new LinkedHashSet<>();
+        for (String s : symbols) {
+            if (s != null && !s.isBlank()) {
+                lowered.add(s.trim().toLowerCase());
+            }
+        }
+        if (lowered.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        try {
+            List<DocumentEmbeddingProjection> rows =
+                    repository.findChunksBySymbols(lowered, objectType, section);
+            LOG.info("Exact symbol lookup: {} symbol(s) -> {} chunk(s)", lowered.size(), rows.size());
+            return toDocuments(rows);
+        } catch (Exception e) {
+            LOG.error("Exact symbol lookup failed, caller should fall back to search: {}", e.getMessage(), e);
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Placeholder for "exclude nothing".
+     *
+     * <p>{@code NOT IN ()} is not valid SQL, so the exclusion list is never allowed to be
+     * empty. An empty string can never equal a real section — every section starts with
+     * {@code ##} — so passing it is equivalent to no filter while keeping one query path
+     * instead of two.</p>
+     */
+    private static final String NO_EXCLUSIONS = "";
+
+    /**
+     * RRF smoothing constant. 60 is the value from the original rank-fusion work and the de
+     * facto default: large enough that the top few ranks are not overwhelmingly dominant,
+     * small enough that deep results still fade out.
+     */
+    private static final double RRF_K = 60.0;
+
+    /** Whether the lexical arm runs; off restores pure vector + file-name behaviour. */
+    private boolean fullTextEnabled = true;
+
+    public void setFullTextEnabled(boolean fullTextEnabled) {
+        this.fullTextEnabled = fullTextEnabled;
+    }
+
+    /** Add 1/(k + rank) for each result, so a document ranked well by either arm rises. */
+    private static void accumulateRrf(Map<Long, Double> scores, List<DocumentEmbeddingProjection> ranked) {
+        for (int i = 0; i < ranked.size(); i++) {
+            Long id = ranked.get(i).getId();
+            scores.merge(id, 1.0 / (RRF_K + i + 1), Double::sum);
+        }
+    }
+
+    /** Never hand the repository an empty collection; substitute the sentinel instead. */
+    private static Collection<String> excludedOrSentinel(Collection<String> excludedSections) {
+        if (excludedSections == null || excludedSections.isEmpty()) {
+            return List.of(NO_EXCLUSIONS);
+        }
+        return excludedSections;
+    }
+
+    /** Projection rows to Spring AI Documents, carrying the metadata the re-ranker reads. */
+    private List<Document> toDocuments(List<DocumentEmbeddingProjection> rows) {
+        List<Document> results = new ArrayList<>();
+        for (DocumentEmbeddingProjection p : rows) {
+            Map<String, Object> metadata = new HashMap<>();
+            metadata.put("filename", p.getFileName());
+            metadata.put("id", p.getId());
+            metadata.put("created_at", p.getCreatedAt());
+            metadata.put("similarity", p.getSimilarityScore());
+            metadata.put("distance", 1.0 - p.getSimilarityScore());
+            metadata.put("rgd_id", p.getRgdId());
+            metadata.put("section", p.getSection());
+            results.add(new Document(p.getChunk(), metadata));
+        }
+        return results;
+    }
+
+    /**
      * Hybrid search: vector search (primary) + file-name matching (supplementary).
      * Vector search finds semantically similar chunks.
      * File-name matching ensures chunks from the queried entity's report are included.
@@ -208,6 +315,24 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
      */
     @Transactional(readOnly = true)
     public List<Document> hybridSearch(SearchRequest request) {
+        return hybridSearch(request, null);
+    }
+
+    /**
+     * Hybrid search with section exclusions applied to the vector arm.
+     *
+     * <p>Region-listing sections are the bulk of a report and semantically bland, which
+     * makes them ideal filler for a candidate set: on QTL reports
+     * {@code ## Genes in Region} alone is roughly two-thirds of the chunks. Dropping them
+     * at the SQL level rather than in the re-ranker is what matters — by the time results
+     * are ranked, the boilerplate has already consumed the topK slots.</p>
+     *
+     * <p>Only the vector arm is filtered. The file-name arm is already scoped to a
+     * specific matched report and capped per file, so it cannot flood the candidate set
+     * the same way, and a user asking about a named report may well want those rows.</p>
+     */
+    @Transactional(readOnly = true)
+    public List<Document> hybridSearch(SearchRequest request, Collection<String> excludedSections) {
         LOG.info("Starting HYBRID search for query: '{}'", request.getQuery());
         String query = request.getQuery();
         int topK = request.getTopK();
@@ -224,39 +349,86 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
             // 1. Vector search (primary)
             List<DocumentEmbeddingProjection> vectorResults;
             if (threshold > 0) {
-                vectorResults = repository.findNearestLightWithThreshold(queryEmbedding, topK, threshold);
+                vectorResults = repository.findNearestLightWithThreshold(
+                        queryEmbedding, topK, threshold, excludedOrSentinel(excludedSections));
             } else {
-                vectorResults = repository.findNearestLight(queryEmbedding, topK);
+                vectorResults = repository.findNearestLight(
+                        queryEmbedding, topK, excludedOrSentinel(excludedSections));
             }
 
-            // 2. File-name matching (supplementary) — ensures entity-specific chunks are in candidate set
+            // 2. Full-text search — catches exact terms the embedding misses. A symbol like
+            // "LH/Mav" has almost no semantic signal, so cosine similarity drifts toward
+            // unrelated text while a lexical match lands it exactly.
+            List<DocumentEmbeddingProjection> textResults = new ArrayList<>();
+            if (fullTextEnabled) {
+                try {
+                    textResults = repository.findByFullTextSearch(
+                            query, topK, excludedOrSentinel(excludedSections));
+                } catch (Exception e) {
+                    // Never let the lexical arm take down the search; vector results still stand.
+                    LOG.error("Full-text arm failed, continuing with vector results only: {}", e.getMessage());
+                }
+            }
+
+            // 3. File-name matching (supplementary) — ensures entity-specific chunks are in candidate set
             List<DocumentEmbeddingProjection> fileNameResults = fileNameSearch(query, queryEmbedding);
 
-            LOG.info("Vector search returned {} results, file-name match returned {} results",
-                    vectorResults.size(), fileNameResults.size());
+            LOG.info("Vector search returned {}, full-text returned {}, file-name match returned {}",
+                    vectorResults.size(), textResults.size(), fileNameResults.size());
 
-            // 3. Merge + deduplicate by id (vector results take priority for similarity scores)
+            // 4. Reciprocal Rank Fusion across the two scored arms.
+            //
+            // Cosine similarity and ts_rank are not comparable numbers — ts_rank here tops out
+            // around 0.05 while cosine sits near 0.5 — so fusing the scores directly would let
+            // the vector arm win every time. RRF throws the magnitudes away and fuses ranks
+            // instead, which is the whole point of the technique.
+            Map<Long, Double> rrf = new HashMap<>();
+            accumulateRrf(rrf, vectorResults);
+            accumulateRrf(rrf, textResults);
+
             Map<Long, DocumentEmbeddingProjection> mergedMap = new LinkedHashMap<>();
             for (DocumentEmbeddingProjection p : vectorResults) {
                 mergedMap.put(p.getId(), p);
             }
+            Set<Long> vectorIds = new HashSet<>(mergedMap.keySet());
+            for (DocumentEmbeddingProjection p : textResults) {
+                mergedMap.putIfAbsent(p.getId(), p);
+            }
+            // The file-name arm is unranked relative to the other two, so it joins the candidate
+            // set without an RRF contribution and lets the stage-2 re-ranker judge it.
             for (DocumentEmbeddingProjection p : fileNameResults) {
                 mergedMap.putIfAbsent(p.getId(), p);
             }
 
-            // 4. Convert to Document objects with similarity scores
+            // 5. Convert to Documents, ordered by fused rank.
+            List<DocumentEmbeddingProjection> ordered = new ArrayList<>(mergedMap.values());
+            ordered.sort((a, b) -> Double.compare(
+                    rrf.getOrDefault(b.getId(), 0.0), rrf.getOrDefault(a.getId(), 0.0)));
+
             List<Document> results = new ArrayList<>();
-            for (DocumentEmbeddingProjection p : mergedMap.values()) {
+            for (DocumentEmbeddingProjection p : ordered) {
+                boolean fromVector = vectorIds.contains(p.getId());
                 Map<String, Object> metadata = new HashMap<>();
                 metadata.put("filename", p.getFileName());
                 metadata.put("id", p.getId());
                 metadata.put("created_at", p.getCreatedAt());
-                metadata.put("similarity", p.getSimilarityScore());
-                metadata.put("distance", 1.0 - p.getSimilarityScore());
+                metadata.put("rgd_id", p.getRgdId());
+                metadata.put("section", p.getSection());
+                metadata.put("rrf_score", rrf.getOrDefault(p.getId(), 0.0));
+
+                // The stage-2 re-ranker reads "distance" as 1 - cosine. Only vector rows carry a
+                // real cosine; a text-only row's ts_rank on that scale would read as "almost no
+                // semantic match" and bury a chunk that matched the query terms exactly. Such
+                // rows get the search threshold instead — at the bar, not above it — leaving the
+                // re-ranker's keyword component to decide, which is what actually found them.
+                double similarity = fromVector ? p.getSimilarityScore() : Math.max(threshold, 0.0);
+                metadata.put("similarity", similarity);
+                metadata.put("distance", 1.0 - similarity);
                 results.add(new Document(p.getChunk(), metadata));
             }
 
-            LOG.info("Hybrid search returning {} merged results", results.size());
+            LOG.info("Hybrid search returning {} merged results ({} vector-backed)",
+                    results.size(), vectorIds.size());
             return results;
 
         } catch (Exception e) {
