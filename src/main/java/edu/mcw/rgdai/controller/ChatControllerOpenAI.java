@@ -75,6 +75,7 @@ public class ChatControllerOpenAI {
     /** Object types whose tables are fully populated, so an exhaustive answer is trustworthy. */
     private final List<String> enumerationTypes;
     private final String enumerationAssembly;
+    private final int enumerationMaxRows;
     private final boolean speciesDisambiguationEnabled;
     private final DocumentEmbeddingDAO reportDAO = new DocumentEmbeddingDAO();
     private final String corpusCoverageNote;
@@ -105,6 +106,7 @@ public class ChatControllerOpenAI {
             @Value("${chatbot.retrieval.excluded-sections:}") String excludedSectionsCsv,
             @Value("${chatbot.enumeration.object-types:}") String enumerationTypesCsv,
             @Value("${chatbot.enumeration.default-assembly:GRCr8}") String enumerationAssembly,
+            @Value("${chatbot.enumeration.max-rows:200}") int enumerationMaxRows,
             @Value("${chatbot.species-disambiguation.enabled:true}") boolean speciesDisambiguationEnabled,
             @Value("${chatbot.corpus.coverage-note:The knowledge base currently contains RAT (Rattus norvegicus) records ONLY. Human, mouse and all other species are not loaded yet.}") String corpusCoverageNote,
             DocumentEmbeddingOpenAIRepository repository,
@@ -131,6 +133,7 @@ public class ChatControllerOpenAI {
         this.excludedSections = List.copyOf(splitCsv(excludedSectionsCsv));
         this.enumerationTypes = List.copyOf(splitCsv(enumerationTypesCsv));
         this.enumerationAssembly = enumerationAssembly;
+        this.enumerationMaxRows = Math.max(1, enumerationMaxRows);
         this.speciesDisambiguationEnabled = speciesDisambiguationEnabled;
         this.corpusCoverageNote = corpusCoverageNote;
         this.repository = repository;
@@ -440,6 +443,75 @@ public class ChatControllerOpenAI {
      * better than a failed request.
      */
     /**
+     * Give coordinates for every record the user named, from the position table.
+     *
+     * <p>Asked "what are the positions of them" about four genes, retrieval can only answer for
+     * whichever gene reports it happened to surface — and the assistant then positions two of
+     * the four and explains that the others weren't in its context. The coordinates are a
+     * column, so this reads them directly: every named record gets an answer, or is visibly
+     * missing from the table rather than quietly dropped.</p>
+     *
+     * <p>Not gated on populated types: this answers only about records the user named, so a
+     * partially loaded corpus can make it silent but never wrong.</p>
+     *
+     * @return a formatted table to prepend to the context, or null when nothing resolves
+     */
+    private String tryNamedPositions(QueryAnalysis analysis) {
+        if (!analysis.positionQuery || analysis.entities == null || analysis.entities.isEmpty()) {
+            return null;
+        }
+
+        Set<String> lowered = new LinkedHashSet<>();
+        for (String e : analysis.entities) {
+            if (e != null && !e.isBlank()) {
+                lowered.add(e.trim().toLowerCase());
+            }
+        }
+        if (lowered.isEmpty()) {
+            return null;
+        }
+
+        String assembly = (analysis.enumAssembly == null || analysis.enumAssembly.isBlank())
+                ? enumerationAssembly : analysis.enumAssembly.trim();
+
+        try {
+            List<RegionMemberProjection> rows = repository.findPositionsBySymbols(lowered, assembly);
+            if (rows.isEmpty()) {
+                return null;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("--- COMPLETE DATABASE LIST: positions on %s ---%n", assembly));
+            sb.append("| Symbol | Name | Chromosome | Start | Stop |\n");
+            Set<String> found = new LinkedHashSet<>();
+            for (RegionMemberProjection m : rows) {
+                found.add(m.getSymbol().toLowerCase());
+                sb.append(String.format("| %s | %s | %s | %s | %s |%n",
+                        m.getSymbol(),
+                        m.getName() == null ? "" : m.getName(),
+                        m.getChromosome() == null ? "" : m.getChromosome(),
+                        m.getStartPos() == null ? "" : m.getStartPos().toString(),
+                        m.getStopPos() == null ? "" : m.getStopPos().toString()));
+            }
+
+            // Name what is genuinely absent, so a missing record is stated rather than skipped.
+            List<String> missing = lowered.stream().filter(s -> !found.contains(s)).toList();
+            if (!missing.isEmpty()) {
+                sb.append(String.format("NOT FOUND on %s: %s%n", assembly, String.join(", ", missing)));
+            }
+            sb.append(String.format("--- END COMPLETE DATABASE LIST ---%n%n"));
+
+            LOG.info("Named positions: {} of {} requested record(s) resolved on {}",
+                    found.size(), lowered.size(), assembly);
+            return sb.toString();
+
+        } catch (Exception e) {
+            LOG.error("Named position lookup failed, retrieving normally: {}", e.getMessage(), e);
+            return null;
+        }
+    }
+
+    /**
      * Resolve a model-supplied object type to the exact spelling stored in {@code report_object}.
      *
      * <p>{@code object_type} is compared case-sensitively in SQL, but the type arrives from the
@@ -524,20 +596,37 @@ public class ChatControllerOpenAI {
                 return null;
             }
 
+            // A wide QTL can span thousands of genes — Srcrt1 alone covers ~61 Mb and 1,455 of
+            // them. Emitting every row would swamp the prompt, so past the cap the count is
+            // reported honestly and only the first rows are listed, in position order. Saying
+            // "1,455, here are the first 200" is useful; silently showing 200 as if that were
+            // all of them is the failure this whole feature exists to prevent.
+            boolean truncated = members.size() > enumerationMaxRows;
+            List<RegionMemberProjection> shown = truncated
+                    ? members.subList(0, enumerationMaxRows) : members;
+
             StringBuilder sb = new StringBuilder();
             sb.append(String.format(
-                    "--- COMPLETE DATABASE LIST: every %s overlapping %s (%s chr%s:%d-%d, %s) ---%n",
+                    "--- COMPLETE DATABASE LIST: every %s overlapping %s (%s chr%s:%d-%d) ---%n",
                     targetType, anchor.getSymbol(), assembly, anchor.getChromosome(),
-                    anchor.getStartPos(), anchor.getStopPos(), assembly));
+                    anchor.getStartPos(), anchor.getStopPos()));
+            if (truncated) {
+                sb.append(String.format(
+                        "NOTE: %d %s(s) overlap this region in total. Only the first %d are listed "
+                        + "below, in position order. State the total when answering and offer to "
+                        + "narrow the interval or filter by function.%n",
+                        members.size(), targetType, shown.size()));
+            }
             sb.append("| Symbol | Name | Start | Stop |\n");
-            for (RegionMemberProjection m : members) {
+            for (RegionMemberProjection m : shown) {
                 sb.append(String.format("| %s | %s | %s | %s |%n",
                         m.getSymbol(),
                         m.getName() == null ? "" : m.getName(),
                         m.getStartPos() == null ? "" : m.getStartPos().toString(),
                         m.getStopPos() == null ? "" : m.getStopPos().toString()));
             }
-            sb.append(String.format("Total: %d%n--- END COMPLETE DATABASE LIST ---%n%n", members.size()));
+            sb.append(String.format("Total overlapping: %d (listed here: %d)%n"
+                    + "--- END COMPLETE DATABASE LIST ---%n%n", members.size(), shown.size()));
 
             LOG.info("Region overlap: {} {}(s) overlap {} on {} chr{}",
                     members.size(), targetType, anchor.getSymbol(), assembly, anchor.getChromosome());
@@ -844,6 +933,9 @@ public class ChatControllerOpenAI {
         String regionAnchor;
         /** What to list inside that region: Gene, Qtl or Strain. */
         String regionTargetType;
+
+        /** True when the user is asking where named records are, rather than about them. */
+        boolean positionQuery;
     }
 
     /**
@@ -902,7 +994,7 @@ public class ChatControllerOpenAI {
         Reply with ONLY a JSON object, no markdown fences and no commentary:
         {"query": "<standalone search query>", "entities": ["<name>", "..."],
          "regionQuery": false, "regionAnchor": "", "regionTargetType": "",
-         "enumeration": false,
+         "positionQuery": false, "enumeration": false,
          "enumObjectType": "", "enumChromosome": "", "enumAssembly": ""}
 
         "query" RULES:
@@ -941,6 +1033,17 @@ public class ChatControllerOpenAI {
           "regionAnchor" to the record whose region is meant (e.g. "A2m" for "the QTLs in
           the region of A2m"), or "" if the region is given as raw coordinates;
           "regionTargetType" to what is being listed inside it — Gene, Qtl or Strain.
+
+        "positionQuery" RULES:
+        - true when the user is asking WHERE named records are — their position, coordinates,
+          start/stop, locus or which chromosome they sit on.
+        - Set it alongside "entities", which must hold every record they are asking about.
+          Resolve "them", "these", "those" from the conversation history first, so a follow-up
+          like "can you give me the positions of them" carries ALL the records named earlier,
+          not just the ones most recently mentioned.
+        - Examples of true: "where is Gpat3", "positions of them",
+          "what are the coordinates of Setdb1 and Slc22a15".
+        - false when the question is about what a record does, not where it is.
 
         "enumeration" RULES:
         - true ONLY when the user wants EVERY record of one type on a whole chromosome —
@@ -1016,6 +1119,7 @@ public class ChatControllerOpenAI {
             analysis.enumAssembly = node.path("enumAssembly").asText("").trim();
             analysis.regionAnchor = node.path("regionAnchor").asText("").trim();
             analysis.regionTargetType = node.path("regionTargetType").asText("").trim();
+            analysis.positionQuery = node.path("positionQuery").asBoolean(false);
 
             LOG.info("Query analysis: \"{}\" -> \"{}\" | entities={} | regionQuery={} | enumeration={} {} chr{}",
                     question, analysis.searchQuery, analysis.entities, analysis.regionQuery,
@@ -1064,6 +1168,9 @@ public class ChatControllerOpenAI {
         String enumerationTable = tryEnumeration(analysis);
         if (enumerationTable == null) {
             enumerationTable = tryRegionOverlap(analysis);
+        }
+        if (enumerationTable == null) {
+            enumerationTable = tryNamedPositions(analysis);
         }
 
         // Silent while one species is loaded; produces a note only when a named record

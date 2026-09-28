@@ -373,10 +373,17 @@ const initUIEvents = () => {
         }
     });
 
-    // Auto-grow the textarea to fit its content
+    // Auto-grow the textarea to fit its content.
+    //
+    // scrollHeight measures content plus padding but NOT borders, while the height we set
+    // is a border-box height (Bootstrap's reboot puts box-sizing: border-box on everything).
+    // Assigning scrollHeight directly therefore hands the borders' worth of space back out
+    // of the content box, leaving the field a couple of pixels short of one line and
+    // clipping the text — and it re-ran on every keystroke, so it never recovered.
     const autoResizeTextarea = () => {
         textarea.style.height = 'auto';
-        textarea.style.height = textarea.scrollHeight + 'px';
+        const borders = textarea.offsetHeight - textarea.clientHeight;
+        textarea.style.height = (textarea.scrollHeight + borders) + 'px';
     };
     textarea.addEventListener('input', autoResizeTextarea);
     autoResizeTextarea();

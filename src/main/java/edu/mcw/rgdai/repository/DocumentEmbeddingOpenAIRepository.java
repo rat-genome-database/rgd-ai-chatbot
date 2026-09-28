@@ -90,6 +90,27 @@ public interface DocumentEmbeddingOpenAIRepository extends JpaRepository<Documen
     // plainto_tsquery uses AND (all terms must match) — too restrictive for natural language queries.
     // Convert & to | so chunks matching ANY query term are found, ranked by how many they match.
     /**
+     * Positions for a batch of named records on one assembly.
+     *
+     * <p>"Give me the positions of them" is a question about specific records, and the answer
+     * is a column in {@code report_position} — not something to hope surfaces in a retrieved
+     * chunk. Going to the table means every named record gets an answer or is visibly absent,
+     * instead of however many happened to be retrieved.</p>
+     *
+     * <p>Symbols must be lower-cased by the caller to match LOWER(o.symbol).</p>
+     */
+    @Query(value = "SELECT o.rgd_id AS rgdId, o.symbol AS symbol, o.name AS name, " +
+            "p.chromosome AS chromosome, p.start_pos AS startPos, p.stop_pos AS stopPos " +
+            "FROM report_object o " +
+            "JOIN report_position p ON p.rgd_id = o.rgd_id " +
+            "WHERE LOWER(o.symbol) IN (:symbols) AND p.assembly = :assembly " +
+            "ORDER BY o.symbol", nativeQuery = true)
+    List<RegionMemberProjection> findPositionsBySymbols(
+            @Param("symbols") Collection<String> symbols,
+            @Param("assembly") String assembly
+    );
+
+    /**
      * The span of one named record on an assembly — the anchor for a region question.
      *
      * <p>Returns a row per matching object, so a symbol shared across species comes back more
