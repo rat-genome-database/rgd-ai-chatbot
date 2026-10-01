@@ -464,7 +464,7 @@ public class ChatControllerOpenAI {
         Set<String> lowered = new LinkedHashSet<>();
         for (String e : analysis.entities) {
             if (e != null && !e.isBlank()) {
-                lowered.add(e.trim().toLowerCase());
+                lowered.add(PostgresVectorStoreOpenAI.normalizeSymbol(e));
             }
         }
         if (lowered.isEmpty()) {
@@ -569,7 +569,8 @@ public class ChatControllerOpenAI {
         String anchorSymbol = analysis.regionAnchor.trim();
 
         try {
-            List<RegionMemberProjection> anchors = repository.findAnchorPosition(anchorSymbol, assembly);
+            List<RegionMemberProjection> anchors = repository.findAnchorPosition(
+                    PostgresVectorStoreOpenAI.normalizeSymbol(anchorSymbol), assembly);
             if (anchors.isEmpty()) {
                 LOG.info("Region anchor '{}' has no position on {} - retrieving normally",
                         anchorSymbol, assembly);
@@ -660,7 +661,7 @@ public class ChatControllerOpenAI {
         Set<String> lowered = new LinkedHashSet<>();
         for (String e : entities) {
             if (e != null && !e.isBlank()) {
-                lowered.add(e.trim().toLowerCase());
+                lowered.add(PostgresVectorStoreOpenAI.normalizeSymbol(e));
             }
         }
         if (lowered.isEmpty()) {
@@ -1381,24 +1382,34 @@ public class ChatControllerOpenAI {
              they appear in the context so users can navigate to the relevant
              RGD report pages.
 
-        10. BE COMPLETE AND CLEAR
+        10. VARIANTS
+           - Answer what the context actually contains about a variant, then point the user
+             to RGD's Variant Visualizer for anything beyond it — browsing variants across a
+             region or strain, comparing strains, filtering by predicted impact, or any
+             fuller view of the variant data.
+           - Link it as:
+             [Variant Visualizer](https://rgd.mcw.edu/rgdweb/front/config.html)
+           - Offer it once, where it helps. Do not append it to answers that are not about
+             variants, and do not use it to avoid answering what you can.
+
+        11. BE COMPLETE AND CLEAR
            - You may summarize information, but do not leave out important
              details or relevant sources just to be brief.
            - If information is missing, unclear, or not stated in the context,
              explain that plainly.
 
-        11. AVOID ASSUMPTIONS
+        12. AVOID ASSUMPTIONS
            - Do not infer outcomes, effectiveness, safety conclusions, or
              regulatory meaning beyond what is explicitly stated.
 
-        12. DOCUMENT REFERENCES
+        13. DOCUMENT REFERENCES
            When mentioning a document name in your response, wrap it in
            double brackets using the EXACT filename from the
            "--- FROM: filename ---" headers as-is (do NOT add or remove
            any extension).
            Example: [[RGD Gene Report - A2m (2004)]]
 
-        13. COMPLETE DATABASE LISTS
+        14. COMPLETE DATABASE LISTS
            - A block marked "COMPLETE DATABASE LIST" is not a retrieved excerpt. It is the
              full result of a direct database query, already ordered by chromosomal position.
            - Treat it as authoritative and exhaustive for what it covers. Report every row,
@@ -1411,7 +1422,7 @@ public class ChatControllerOpenAI {
            - If the question also asks about traits, diseases or other detail, answer that
              from the context documents while still reporting the list in full.
 
-        14. WHICH SPECIES DID THEY MEAN
+        15. WHICH SPECIES DID THEY MEAN
            - A block marked "SPECIES AVAILABLE FOR THE NAMED RECORDS" lists, per symbol,
              every species that record exists for in the knowledge base.
            - If a record is listed for MORE THAN ONE species and the user did not say which
@@ -1448,11 +1459,34 @@ public class ChatControllerOpenAI {
         return result;
     }
 
+    /**
+     * Whether the message is ONLY a greeting, with no question attached.
+     *
+     * <p>This short-circuits before retrieval and before the model is called, so anything it
+     * matches gets a canned reply and nothing else. It previously matched a greeting word
+     * anywhere in the message, which meant a real question that merely opened politely —
+     * "Hi. I am a research scientist looking for rat models of hypertension and obesity" —
+     * was answered with "What would you like to know?" and never reached the model at all.</p>
+     *
+     * <p>So the whole message must be the greeting. Punctuation is stripped and a few natural
+     * trailers are allowed ("hi there", "hello RatChat", "hey, how are you"), but the moment
+     * real content follows, it is a question and is treated as one.</p>
+     */
     private boolean isGreeting(String text) {
         if (text == null || text.trim().isEmpty()) {
             return false;
         }
-        return text.toLowerCase().matches(".*\\b(hi|hello|hey|greetings)\\b.*");
+        String normalized = text.toLowerCase()
+                .replaceAll("[^a-z ]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (normalized.isEmpty()) {
+            return false;
+        }
+        return normalized.matches(
+                "(hi|hiya|hello|hey|greetings|good morning|good afternoon|good evening)"
+                + "( there| rgd| ratchat| everyone| all)?"
+                + "( how are you( doing)?| how s it going)?");
     }
 
     private String getOrCreateConversationId(Authentication user, HttpServletRequest request) {
@@ -1475,7 +1509,11 @@ public class ChatControllerOpenAI {
                                        "in", "on", "at", "to", "for", "of", "with",
                                        "what", "how", "when", "where", "which", "that",
                                        "this", "these", "those", "be", "been", "being",
-                                       "have", "has", "had", "do", "does", "did");
+                                       "have", "has", "had", "do", "does", "did",
+                                       // Two-letter words now pass the length filter, so the
+                                       // ones that really are noise have to be named here.
+                                       "it", "or", "as", "by", "if", "so", "we", "my",
+                                       "me", "us", "he", "no", "up", "am");
 
         // First, preserve original whitespace-split tokens (keeps special chars like / - )
         // This ensures "BN/NHsdMcwi", "SS/JrHsdMcwi", "Tp53" stay intact as search terms
@@ -1484,7 +1522,8 @@ public class ChatControllerOpenAI {
             String lower = token.toLowerCase();
             // Strip trailing punctuation (commas, periods, question marks)
             lower = lower.replaceAll("[,\\.\\?!;:]+$", "");
-            if (lower.length() > 2 && !stopWords.contains(lower)) {
+            // Length 2 is kept: LH, LN, BN and SS are strains, not noise.
+            if (lower.length() >= 2 && !stopWords.contains(lower)) {
                 terms.add(lower);
             }
         }
@@ -1495,7 +1534,7 @@ public class ChatControllerOpenAI {
                 .split("\\s+");
 
         for (String word : words) {
-            if (word.length() > 2 && !stopWords.contains(word)) {
+            if (word.length() >= 2 && !stopWords.contains(word)) {
                 terms.add(word);
             }
         }

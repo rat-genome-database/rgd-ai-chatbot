@@ -174,11 +174,28 @@ public class ChatController {
         }
     }
 
+    /**
+     * Whether the message is ONLY a greeting, with no question attached.
+     *
+     * <p>Kept in step with the same check in {@code ChatControllerOpenAI}: matching a greeting
+     * word anywhere in the message meant a real question that opened politely was answered
+     * with the canned greeting and never reached the model.</p>
+     */
     private boolean isGreeting(String text) {
         if (text == null || text.trim().isEmpty()) {
             return false;
         }
-        return text.toLowerCase().matches(".*\\b(hi|hello|hey|greetings)\\b.*");
+        String normalized = text.toLowerCase()
+                .replaceAll("[^a-z ]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (normalized.isEmpty()) {
+            return false;
+        }
+        return normalized.matches(
+                "(hi|hiya|hello|hey|greetings|good morning|good afternoon|good evening)"
+                + "( there| rgd| ratchat| everyone| all)?"
+                + "( how are you( doing)?| how s it going)?");
     }
 
     private String getOrCreateConversationId(Authentication user, HttpServletRequest request) {

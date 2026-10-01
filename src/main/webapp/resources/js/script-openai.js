@@ -52,8 +52,13 @@ const convertNCTToLinks = (text) => {
 
 // Function to convert [[filename]] markers to clickable links
 const convertMdToLinks = (text) => {
-    // Pattern to match [[...]] markers from backend (with or without .md extension)
-    const pattern = /\[\[([^\]]+)\]\]/g;
+    // Match everything up to the first ]] rather than "characters that aren't ]".
+    //
+    // Report names contain square brackets of their own — ZSF1-Lepr^[fa], Lepr^[cp]/Crl and
+    // LH-Chr 17^[LN] among them — so [^\]]+ stopped dead at the ] inside ^[fa] and the marker
+    // never matched. The raw [[...]] then reached the markdown parser, which read the inner
+    // [fa] and [cp] as link syntax and shredded the name into fragments.
+    const pattern = /\[\[([\s\S]+?)\]\]/g;
 
     return text.replace(pattern, (match, filename) => {
         filename = filename.trim();
@@ -94,15 +99,38 @@ const convertMdToLinks = (text) => {
 // Wraps the label AND the link list that follows in one span so both can be
 // styled together. SOURCES_USED is the legacy token, still matched so older
 // responses keep rendering correctly.
+// Collapse repeats that point at the same report.
+//
+// A strain can be stored under two filename spellings — one carrying markup like
+// ZSF1-Lepr^[fa] and one with it escaped — so the same record is cited twice and the list
+// reads as two different strains. Both resolve to the same RGD id, and therefore the same
+// href, which is what identity is judged on here. Falls back to the raw list when nothing
+// converted into a link, so an unrecognised entry is never silently dropped.
+const dedupeLinkList = (list) => {
+    const anchors = list.match(/<a\s[^>]*>[\s\S]*?<\/a>/g);
+    if (!anchors || anchors.length === 0) {
+        return list.replace(/,(?=\S)/g, ', ');
+    }
+    const seen = new Set();
+    const unique = [];
+    for (const anchor of anchors) {
+        const href = (anchor.match(/href="([^"]+)"/) || [])[1] || anchor;
+        if (!seen.has(href)) {
+            seen.add(href);
+            unique.push(anchor);
+        }
+    }
+    return unique.join(', ');
+};
+
 const formatRelatedLinks = (text) => {
     return text.replace(
         /(?:RELATED_LINKS|SOURCES_USED|SOURCES USED):\s*([\s\S]*?)(<\/p>|$)/,
         (match, list, tail) =>
             '<span class="related-links"><strong class="sources-label">Related Links:</strong> '
-            // Space out the comma-separated filenames. Scoped to the link list on
-            // purpose: applying it to the whole response reformats every number in
-            // it, turning coordinates like 11,334,906 into "11, 334, 906".
-            + list.replace(/,(?=\S)/g, ', ')
+            // Comma spacing is scoped to the link list on purpose: applied to the whole
+            // response it reformats every number, turning 11,334,906 into "11, 334, 906".
+            + dedupeLinkList(list)
             + '</span>' + tail);
 };
 

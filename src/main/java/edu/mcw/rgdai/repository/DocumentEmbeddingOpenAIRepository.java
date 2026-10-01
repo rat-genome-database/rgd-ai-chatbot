@@ -76,7 +76,7 @@ public interface DocumentEmbeddingOpenAIRepository extends JpaRepository<Documen
             "CAST(1.0 AS double precision) AS similarityScore " +
             "FROM report_object o " +
             "JOIN document_embeddings e ON e.rgd_id = o.rgd_id " +
-            "WHERE LOWER(o.symbol) IN (:symbols) " +
+            "WHERE regexp_replace(LOWER(o.symbol), '<[^>]*>|[\\^\\[\\]]', '', 'g') IN (:symbols) " +
             "AND (:objectType IS NULL OR o.object_type = :objectType) " +
             "AND (:section IS NULL OR e.section = :section) " +
             "ORDER BY o.symbol, e.id", nativeQuery = true)
@@ -86,9 +86,6 @@ public interface DocumentEmbeddingOpenAIRepository extends JpaRepository<Documen
             @Param("section") String section
     );
 
-    // Full-text search using GIN index + ts_rank with OR semantics.
-    // plainto_tsquery uses AND (all terms must match) — too restrictive for natural language queries.
-    // Convert & to | so chunks matching ANY query term are found, ranked by how many they match.
     /**
      * Positions for a batch of named records on one assembly.
      *
@@ -103,7 +100,7 @@ public interface DocumentEmbeddingOpenAIRepository extends JpaRepository<Documen
             "p.chromosome AS chromosome, p.start_pos AS startPos, p.stop_pos AS stopPos " +
             "FROM report_object o " +
             "JOIN report_position p ON p.rgd_id = o.rgd_id " +
-            "WHERE LOWER(o.symbol) IN (:symbols) AND p.assembly = :assembly " +
+            "WHERE regexp_replace(LOWER(o.symbol), '<[^>]*>|[\\^\\[\\]]', '', 'g') IN (:symbols) AND p.assembly = :assembly " +
             "ORDER BY o.symbol", nativeQuery = true)
     List<RegionMemberProjection> findPositionsBySymbols(
             @Param("symbols") Collection<String> symbols,
@@ -120,7 +117,7 @@ public interface DocumentEmbeddingOpenAIRepository extends JpaRepository<Documen
             "p.chromosome AS chromosome, p.start_pos AS startPos, p.stop_pos AS stopPos " +
             "FROM report_object o " +
             "JOIN report_position p ON p.rgd_id = o.rgd_id " +
-            "WHERE LOWER(o.symbol) = LOWER(:symbol) AND p.assembly = :assembly " +
+            "WHERE regexp_replace(LOWER(o.symbol), '<[^>]*>|[\\^\\[\\]]', '', 'g') = :symbol AND p.assembly = :assembly " +
             "ORDER BY o.rgd_id", nativeQuery = true)
     List<RegionMemberProjection> findAnchorPosition(
             @Param("symbol") String symbol,
@@ -159,10 +156,14 @@ public interface DocumentEmbeddingOpenAIRepository extends JpaRepository<Documen
      */
     @Query(value = "SELECT DISTINCT o.symbol AS symbol, o.species AS species " +
             "FROM report_object o " +
-            "WHERE LOWER(o.symbol) IN (:symbols) AND o.species IS NOT NULL " +
+            "WHERE regexp_replace(LOWER(o.symbol), '<[^>]*>|[\\^\\[\\]]', '', 'g') IN (:symbols) AND o.species IS NOT NULL " +
             "ORDER BY o.symbol, o.species", nativeQuery = true)
     List<SymbolSpeciesProjection> findSpeciesBySymbols(@Param("symbols") Collection<String> symbols);
 
+    // Full-text search using GIN index + ts_rank with OR semantics.
+    // plainto_tsquery uses AND (all terms must match) — too restrictive for natural language queries.
+    // Convert & to | so chunks matching ANY query term are found, ranked by how many they match.
+    //
     // A query of nothing but stop words reduces to an empty tsquery, which matches no rows
     // rather than erroring — so no guard is needed on the caller's side.
     @Query(value = "SELECT de.id, de.chunk, de.file_name AS fileName, de.created_at AS createdAt, " +

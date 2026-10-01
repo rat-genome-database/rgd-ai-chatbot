@@ -232,7 +232,7 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
         Set<String> lowered = new LinkedHashSet<>();
         for (String s : symbols) {
             if (s != null && !s.isBlank()) {
-                lowered.add(s.trim().toLowerCase());
+                lowered.add(normalizeSymbol(s));
             }
         }
         if (lowered.isEmpty()) {
@@ -280,6 +280,27 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
             Long id = ranked.get(i).getId();
             scores.merge(id, 1.0 / (RRF_K + i + 1), Double::sum);
         }
+    }
+
+    /**
+     * Reduce a symbol to the form the repository's symbol queries compare against.
+     *
+     * <p>Must stay in step with the SQL side, which applies
+     * {@code regexp_replace(LOWER(symbol), '<[^>]*>|[\^\[\]]', '', 'g')}. Stored symbols carry
+     * presentation markup — 1,502 with HTML tags, 890 with the caret form — so
+     * {@code LH-<i>C17h6orf52<sup>em1Aek</sup></i>} and
+     * {@code LH-Chr 17^[LN]-C17h6orf52^[em2Mcwi]} are what a person means when they type
+     * {@code LH-C17h6orf52em1Aek}. Dropping the markup from both sides is what lets the two
+     * meet; without it, exact lookup silently misses every marked-up strain.</p>
+     */
+    public static String normalizeSymbol(String symbol) {
+        if (symbol == null) {
+            return "";
+        }
+        return symbol.toLowerCase()
+                .replaceAll("<[^>]*>", "")
+                .replaceAll("[\\^\\[\\]]", "")
+                .trim();
     }
 
     /** Never hand the repository an empty collection; substitute the sentinel instead. */
@@ -476,7 +497,14 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
             Set<String> uniqueTokens = new LinkedHashSet<>();
             for (String token : tokens) {
                 String lower = token.toLowerCase().replaceAll("[,\\.\\?!;:]+$", "");
-                if (lower.length() <= 2) continue;
+                // Two characters is a real symbol here, not noise: LH, LN, LL, BN, SS, GK and
+                // WF are all rat strains, and 2,163 indexed records have a symbol this short.
+                // Skipping them meant a question about the LH rat gave the file-name arm
+                // nothing to match on at all, leaving only an embedding of "LH" — which
+                // carries almost no semantic signal — to find LH strains with.
+                // Single characters stay out; the stop-word list above already covers the
+                // common two-letter English words.
+                if (lower.length() < 2) continue;
                 if (STOP_WORDS.contains(lower)) continue;
                 uniqueTokens.add(lower);
             }
