@@ -74,6 +74,10 @@ dependencyManagement {
     }
 }
 
+bootWar {
+    archiveFileName = 'assistant.war'
+}
+
 tasks.named('test') {
     useJUnitPlatform()
 }
