@@ -19,9 +19,11 @@ const addToTranscript = (who, text) => {
 const createTranscriptEntry = (who, name, text) => {
     const modelBadge = (who === "AI") ? '<span style="background: #00a67e; color: white; padding: 2px 6px; border-radius: 10px; font-size: 0.8em; margin-left: 5px;">OpenAI</span>' : '';
     // <div><b>${name}:</b> ${modelBadge} ${text}</div>
+    // The speaker label is visually hidden by chat-modern.css (layout shows who spoke) but kept
+    // so screen readers still announce it.
     return `
     <div class="${who}Entry">
-        <div><b>${name}:</b> ${text}</div>
+        <div><span class="entry-label">${name}:</span> ${text}</div>
     </div>`;
 };
 
@@ -148,7 +150,7 @@ const showTypingIndicator = () => {
     const indicatorHTML = `
         <div id="typingIndicator" class="typing-indicator active">
             <div class="typing-dots">
-                <span>thinking</span>
+                <span>Thinking</span>
                 <div class="dot"></div>
                 <div class="dot"></div>
                 <div class="dot"></div>
@@ -220,7 +222,7 @@ const postQuestionStream = (question) => {
         const aiEntry = document.createElement('div');
         aiEntry.className = 'AIEntry';
         const contentDiv = document.createElement('div');
-        contentDiv.innerHTML = '<b>AI:</b> ';
+        contentDiv.innerHTML = '<span class="entry-label">AI:</span> ';
         const streamSpan = document.createElement('span');
         contentDiv.appendChild(streamSpan);
         aiEntry.appendChild(contentDiv);
@@ -333,6 +335,49 @@ const processUrl = (url) => {
         });
 };
 
+// Welcome card with example questions, shown until the first question is asked.
+const SUGGESTED_QUESTIONS = [
+    "What chromosome is the rat gene A2m on?",
+    "What diseases is Tp53 associated with in rat?",
+    "Which QTLs are on rat chromosome 10?",
+    "Which rat strains are models for hypertension?"
+];
+
+const showWelcome = () => {
+    const welcome = document.createElement('div');
+    welcome.className = 'welcome';
+    welcome.innerHTML = `
+        <div class="welcome-icon" aria-hidden="true"><i class="fa-solid fa-dna"></i></div>
+        <h3>What would you like to know?</h3>
+        <p>Ask about rat genes, QTLs, strains and their disease associations. Answers cite the RGD reports they come from.</p>
+        <div class="suggestions"></div>`;
+    // Lift the question box into the card so it is the first thing people see; removeWelcome
+    // puts it back above the footnote once the conversation starts.
+    welcome.insertBefore(document.querySelector('.composer'), welcome.querySelector('.suggestions'));
+    const list = welcome.querySelector('.suggestions');
+    SUGGESTED_QUESTIONS.forEach(q => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'suggestion';
+        button.textContent = q;
+        button.addEventListener('click', () => {
+            document.querySelector('#userInput').value = q;
+            submitTypedText();
+        });
+        list.appendChild(button);
+    });
+    document.querySelector('#transcript').appendChild(welcome);
+};
+
+const removeWelcome = () => {
+    const welcome = document.querySelector('#transcript .welcome');
+    if (welcome) {
+        const inputArea = document.querySelector('.input-area');
+        inputArea.insertBefore(welcome.querySelector('.composer'), inputArea.firstChild);
+        welcome.remove();
+    }
+};
+
 // Event Handlers
 const submitTypedText = (event) => {
     const typedTextInput = document.querySelector('#userInput');
@@ -342,6 +387,7 @@ const submitTypedText = (event) => {
         return false;
     }
 
+    removeWelcome();
     addToTranscript("User", typedText);
     if (USE_STREAMING) {
         postQuestionStream(typedText);
@@ -589,8 +635,7 @@ const initUIEvents = () => {
         });
     }
 
-    // Welcome message
-    addToTranscript("RGD", "Welcome to RGD AI Assistant!");
+    showWelcome();
 
     const startOverBtn = document.getElementById('startOverBtn');
     startOverBtn.addEventListener('click',startOverChat);
