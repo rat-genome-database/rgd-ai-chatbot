@@ -26,7 +26,7 @@
 %>
 <%@ include file="/common/headerarea.jsp" %>
 
-<div class="chat-container chat-modern">
+<div class="chat-container chat-modern" data-logo="<%= contextPath %>/resources/images/ratChat-logo.jpg">
     <!-- Upload Modal -->
     <div id="uploadModal" class="modal">
         <div class="modal-content">
@@ -63,7 +63,7 @@
     <div id="chatArea">
         <div id="header">
             <div class="header-title">
-                <div class="header-icon" aria-hidden="true"><i class="fa-solid fa-dna"></i></div>
+                <img class="header-logo-img" src="<%= contextPath %>/resources/images/ratChat-logo.jpg" alt="Rat Chat">
                 <div>
                     <h2>RGD AI Assistant</h2>
                     <div class="header-subtitle">Answers drawn from RGD's gene, QTL, strain and disease reports</div>

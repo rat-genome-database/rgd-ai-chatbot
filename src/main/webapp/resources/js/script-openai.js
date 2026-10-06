@@ -346,8 +346,10 @@ const SUGGESTED_QUESTIONS = [
 const showWelcome = () => {
     const welcome = document.createElement('div');
     welcome.className = 'welcome';
+    // Same Rat Chat logo as the chat header; the JSP supplies its URL.
+    const logoUrl = document.querySelector('.chat-modern').dataset.logo;
     welcome.innerHTML = `
-        <div class="welcome-icon" aria-hidden="true"><i class="fa-solid fa-dna"></i></div>
+        <img class="welcome-logo" src="${logoUrl}" alt="Rat Chat">
         <h3>What would you like to know?</h3>
         <p>Ask about rat genes, QTLs, strains and their disease associations. Answers cite the RGD reports they come from.</p>
         <div class="suggestions"></div>`;
