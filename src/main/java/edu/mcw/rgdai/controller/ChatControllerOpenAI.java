@@ -77,6 +77,14 @@ public class ChatControllerOpenAI {
     private final String enumerationAssembly;
     private final int enumerationMaxRows;
     private final boolean speciesDisambiguationEnabled;
+    /**
+     * The temperature sent when nothing is configured. Models that fix their temperature name
+     * 1 as the accepted default; Spring AI would otherwise supply 0.7, which they reject.
+     */
+    private static final Double DEFAULT_TEMPERATURE = 1.0;
+
+    private final Double chatTemperature;
+    private final Double rewriteTemperature;
     private final DocumentEmbeddingDAO reportDAO = new DocumentEmbeddingDAO();
     private final String corpusCoverageNote;
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -108,6 +116,8 @@ public class ChatControllerOpenAI {
             @Value("${chatbot.enumeration.default-assembly:GRCr8}") String enumerationAssembly,
             @Value("${chatbot.enumeration.max-rows:200}") int enumerationMaxRows,
             @Value("${chatbot.species-disambiguation.enabled:true}") boolean speciesDisambiguationEnabled,
+            @Value("${chatbot.chat.temperature:1.0}") String chatTemperatureValue,
+            @Value("${chatbot.query-rewrite.temperature:1.0}") String rewriteTemperatureValue,
             @Value("${chatbot.corpus.coverage-note:The knowledge base currently contains RAT (Rattus norvegicus) records ONLY. Human, mouse and all other species are not loaded yet.}") String corpusCoverageNote,
             DocumentEmbeddingOpenAIRepository repository,
             RecaptchaService recaptchaService) {
@@ -135,6 +145,8 @@ public class ChatControllerOpenAI {
         this.enumerationAssembly = enumerationAssembly;
         this.enumerationMaxRows = Math.max(1, enumerationMaxRows);
         this.speciesDisambiguationEnabled = speciesDisambiguationEnabled;
+        this.chatTemperature = parseTemperature(chatTemperatureValue, "chat");
+        this.rewriteTemperature = parseTemperature(rewriteTemperatureValue, "query-rewrite");
         this.corpusCoverageNote = corpusCoverageNote;
         this.repository = repository;
         this.recaptchaService = recaptchaService;
@@ -162,6 +174,49 @@ public class ChatControllerOpenAI {
         this.rewriteClient = ChatClient.builder(openAiChatModel).build();
         LOG.info("OpenAI ChatClient initialized successfully with model: {}", configuredModel);
         LOG.info("Query rewriting enabled={} using model: {}", rewriteEnabled, rewriteModel);
+    }
+
+    /**
+     * Request options for one model, setting {@code temperature} when configured.
+     *
+     * <p>Leaving it unset does NOT omit the parameter. Spring AI's
+     * {@code OpenAiChatProperties} puts its own {@code DEFAULT_TEMPERATURE} (0.7) on the chat
+     * model bean's default options, and per-request options are merged <em>over</em> those
+     * defaults — so a null here lets 0.7 reach the API, which is how
+     * {@code "'temperature' does not support 0.7 with this model"} appears from code that
+     * never mentions 0.7. The only way to control it from here is to send a value.</p>
+     *
+     * <p>Hence the 1.0 default: models that restrict this accept their default, and the error
+     * they raise names 1 as that default. A model that allows a real choice can have one set
+     * in config — 0.0 suits the analysis call, where deterministic JSON extraction matters.</p>
+     */
+    private OpenAiChatOptions.Builder optionsFor(String model, Double temperature) {
+        OpenAiChatOptions.Builder builder = OpenAiChatOptions.builder().withModel(model);
+        if (temperature != null) {
+            builder.withTemperature(temperature);
+        }
+        return builder;
+    }
+
+    /** A temperature setting, or null when blank/unparseable so the parameter is omitted. */
+    /**
+     * A temperature setting, falling back to 1.0.
+     *
+     * <p>Not null on the blank path: leaving it unset hands control to Spring AI's 0.7
+     * default, which is the value models with a fixed temperature reject. Falling back to the
+     * value they do accept keeps a missing or malformed property from breaking every call.</p>
+     */
+    private static Double parseTemperature(String value, String which) {
+        if (value == null || value.isBlank()) {
+            return DEFAULT_TEMPERATURE;
+        }
+        try {
+            return Double.valueOf(value.trim());
+        } catch (NumberFormatException e) {
+            LOG.warn("Unparseable {} temperature '{}' - falling back to {}",
+                    which, value, DEFAULT_TEMPERATURE);
+            return DEFAULT_TEMPERATURE;
+        }
     }
 
     /** Split a comma-separated config value, dropping blanks. Never returns null. */
@@ -208,10 +263,8 @@ public class ChatControllerOpenAI {
             String response = chatClient.prompt()
                     .system(pp.systemMessage)
                     .user(question.getQuestion())
-                    .options(OpenAiChatOptions.builder()
+                    .options(optionsFor(configuredModel, chatTemperature)
                             .withStreamUsage(false)
-                            .withModel(configuredModel)
-                            .withTemperature(1.0)
                             .build())
                     .advisors(spec -> spec.param(CHAT_MEMORY_CONVERSATION_ID_KEY, conversationId))
                     .call()
@@ -312,10 +365,7 @@ public class ChatControllerOpenAI {
                 chatClient.prompt()
                         .system(ppFinal.systemMessage)
                         .user(question.getQuestion())
-                        .options(OpenAiChatOptions.builder()
-                                .withModel(configuredModel)
-                                .withTemperature(1.0)
-                                .build())
+                        .options(optionsFor(configuredModel, chatTemperature).build())
                         .advisors(spec -> spec.param(CHAT_MEMORY_CONVERSATION_ID_KEY, conversationId))
                         .stream()
                         .content()
@@ -1068,10 +1118,7 @@ public class ChatControllerOpenAI {
             String raw = rewriteClient.prompt()
                     .system(analysisSystem)
                     .user(question)
-                    .options(OpenAiChatOptions.builder()
-                            .withModel(rewriteModel)
-                            .withTemperature(0.0)
-                            .build())
+                    .options(optionsFor(rewriteModel, rewriteTemperature).build())
                     .call()
                     .content();
 
