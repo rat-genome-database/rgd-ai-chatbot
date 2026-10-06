@@ -60,6 +60,8 @@ public class ChatControllerOpenAI {
     private ChatClient rewriteClient;
     private final VectorStore openaiVectorStore;
     private final String configuredModel;
+    /** Models the UI may pick per question; the configured model is always first. */
+    private final List<String> selectableModels;
     private final String rewriteModel;
     private final boolean rewriteEnabled;
     private final int rewriteHistoryMessages;
@@ -100,6 +102,7 @@ public class ChatControllerOpenAI {
             ApplicationContext context,
             @Qualifier("openaiVectorStore") VectorStore openaiVectorStore,
             @Value("${spring.ai.openai.model}") String configuredModel,
+            @Value("${chatbot.chat.selectable-models:}") String selectableModelsCsv,
             @Value("${chatbot.query-rewrite.model:gpt-4o-mini}") String rewriteModel,
             @Value("${chatbot.query-rewrite.enabled:true}") boolean rewriteEnabled,
             @Value("${chatbot.query-rewrite.history-messages:8}") int rewriteHistoryMessages,
@@ -125,6 +128,12 @@ public class ChatControllerOpenAI {
         LOG.info("Initializing OpenAI ChatController with system messages for doc context");
         this.openaiVectorStore = openaiVectorStore;
         this.configuredModel = configuredModel;
+        // Allowlist rather than trusting the request: the model name comes from the browser,
+        // and an arbitrary one would let any visitor run up the bill on any model.
+        LinkedHashSet<String> models = new LinkedHashSet<>();
+        models.add(configuredModel);
+        models.addAll(splitCsv(selectableModelsCsv));
+        this.selectableModels = List.copyOf(models);
         this.rewriteModel = rewriteModel;
         this.rewriteEnabled = rewriteEnabled;
         this.rewriteHistoryMessages = rewriteHistoryMessages;
@@ -153,6 +162,7 @@ public class ChatControllerOpenAI {
         this.chatMemory = new InMemoryChatMemory();
 
         LOG.info("Configured OpenAI Model from properties: {}", configuredModel);
+        LOG.info("Selectable chat models: {}", selectableModels);
 
         Map<String, ChatModel> chatModels = context.getBeansOfType(ChatModel.class);
         ChatModel foundModel = null;
@@ -242,13 +252,36 @@ public class ChatControllerOpenAI {
                 .build();
     }
 
+    /** The model a question asked for, if it is on the allowlist; otherwise the default. */
+    private String resolveModel(Question question) {
+        String requested = question.getModel();
+        if (requested == null || requested.isBlank()) {
+            return configuredModel;
+        }
+        if (!selectableModels.contains(requested)) {
+            LOG.warn("Requested model '{}' is not selectable - using {}", requested, configuredModel);
+            return configuredModel;
+        }
+        return requested;
+    }
+
+    /** Feeds the model pulldown; a single entry means there is nothing to choose and it stays hidden. */
+    @GetMapping("/models")
+    public Map<String, Object> models() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("default", configuredModel);
+        result.put("models", selectableModels);
+        return result;
+    }
+
     @PostMapping
     public Answer chat(@RequestBody Question question,
                        Authentication user,
                        HttpServletRequest request) {
 
+        String model = resolveModel(question);
         LOG.info("OpenAI - Received question: {}", question.getQuestion());
-        LOG.info("Processing with model: {}", configuredModel);
+        LOG.info("Processing with model: {}", model);
 
         String conversationId = getOrCreateConversationId(user, request);
         LOG.info("Using conversation ID: {}", conversationId);
@@ -263,7 +296,7 @@ public class ChatControllerOpenAI {
             String response = chatClient.prompt()
                     .system(pp.systemMessage)
                     .user(question.getQuestion())
-                    .options(optionsFor(configuredModel, chatTemperature)
+                    .options(optionsFor(model, chatTemperature)
                             .withStreamUsage(false)
                             .build())
                     .advisors(spec -> spec.param(CHAT_MEMORY_CONVERSATION_ID_KEY, conversationId))
@@ -271,7 +304,7 @@ public class ChatControllerOpenAI {
                     .content();
 
             long t6 = System.currentTimeMillis();
-            LOG.info("OpenAI - Generated response with system message approach using model: {}", configuredModel);
+            LOG.info("OpenAI - Generated response with system message approach using model: {}", model);
 
             // Post-process response to wrap filenames with [[...]] markers for frontend linking
             response = wrapFilenamesInResponse(response, pp.usedFilenames);
@@ -300,7 +333,7 @@ public class ChatControllerOpenAI {
             return new Answer(response);
 
         } catch (Exception e) {
-            LOG.error("OpenAI - Error generating response with model {}: {}", configuredModel, e.getMessage(), e);
+            LOG.error("OpenAI - Error generating response with model {}: {}", model, e.getMessage(), e);
             return new Answer("OpenAI Error: " + e.getMessage());
         }
     }
@@ -310,8 +343,9 @@ public class ChatControllerOpenAI {
                                   Authentication user,
                                   HttpServletRequest request) {
 
+        String model = resolveModel(question);
         LOG.info("OpenAI STREAM - Received question: {}", question.getQuestion());
-        LOG.info("Processing with model: {}", configuredModel);
+        LOG.info("Processing with model: {}", model);
 
         SseEmitter emitter = new SseEmitter(180_000L); // 3 minute timeout
 
@@ -365,7 +399,7 @@ public class ChatControllerOpenAI {
                 chatClient.prompt()
                         .system(ppFinal.systemMessage)
                         .user(question.getQuestion())
-                        .options(optionsFor(configuredModel, chatTemperature).build())
+                        .options(optionsFor(model, chatTemperature).build())
                         .advisors(spec -> spec.param(CHAT_MEMORY_CONVERSATION_ID_KEY, conversationId))
                         .stream()
                         .content()

@@ -78,6 +78,10 @@
 
         <div id="transcript"></div>
         <div class="start-over-section">
+            <span id="modelSelectWrapper" class="model-select-wrapper" style="display: none;">
+                <label for="modelSelect">Model</label>
+                <select id="modelSelect" class="model-select"></select>
+            </span>
             <button id="startOverBtn" class="start-over-btn">Clear memory</button>
         </div>
         <%if((request.getServerName().equals("localhost")) || (request.getServerName().equals("dev.rgd.mcw.edu")) || (request.getServerName().equals("pipelines.rgd.mcw.edu"))){%>

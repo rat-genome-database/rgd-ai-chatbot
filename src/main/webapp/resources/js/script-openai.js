@@ -184,7 +184,7 @@ const postQuestion = (question) => {
         headers: {
             "Content-Type": "application/json"
         },
-        body: JSON.stringify({ question: question })
+        body: JSON.stringify({ question: question, model: selectedModel() })
     })
         .then(res => res.json())
         .then(handleResponse)
@@ -207,7 +207,7 @@ const postQuestionStream = (question) => {
             "Content-Type": "application/json",
             "Accept": "text/event-stream"
         },
-        body: JSON.stringify({ question: question })
+        body: JSON.stringify({ question: question, model: selectedModel() })
     })
     .then(response => {
         if (!response.ok) {
@@ -386,8 +386,47 @@ const startOverChat = () => {
     }
 };
 
+// Model pulldown - only shown when the server lists more than one selectable model
+const MODEL_STORAGE_KEY = 'rgdAssistantModel';
+
+// null lets the server use its configured default
+const selectedModel = () => {
+    const select = document.getElementById('modelSelect');
+    return (select && select.value) ? select.value : null;
+};
+
+const initModelSelect = () => {
+    const select = document.getElementById('modelSelect');
+    if (!select) return;
+
+    fetch(contextPath + "/chat-openai/models")
+        .then(res => res.json())
+        .then(data => {
+            if (!data.models || data.models.length < 2) return;
+
+            let remembered = null;
+            try { remembered = localStorage.getItem(MODEL_STORAGE_KEY); } catch (e) {}
+
+            data.models.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model;
+                option.textContent = model;
+                select.appendChild(option);
+            });
+            select.value = data.models.includes(remembered) ? remembered : data.default;
+
+            select.addEventListener('change', () => {
+                try { localStorage.setItem(MODEL_STORAGE_KEY, select.value); } catch (e) {}
+            });
+            document.getElementById('modelSelectWrapper').style.display = '';
+        })
+        .catch(error => console.error('Error loading model list:', error));
+};
+
 // Initialize UI Events
 const initUIEvents = () => {
+    initModelSelect();
+
     // Submit button click
     const submitButton = document.querySelector('#typedTextSubmit');
     submitButton.addEventListener('click', submitTypedText);

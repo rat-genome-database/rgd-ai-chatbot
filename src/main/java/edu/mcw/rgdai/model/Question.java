@@ -2,6 +2,8 @@ package edu.mcw.rgdai.model;
 
 public class Question {
     private String question;
+    /** Chat model picked in the UI; null or unlisted means the configured default. */
+    private String model;
 
     public Question() {
     }
@@ -16,5 +18,13 @@ public class Question {
 
     public void setQuestion(String question) {
         this.question = question;
+    }
+
+    public String getModel() {
+        return model;
+    }
+
+    public void setModel(String model) {
+        this.model = model;
     }
 }
