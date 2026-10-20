@@ -65,6 +65,25 @@ const convertMdToLinks = (text) => {
     return text.replace(pattern, (match, filename) => {
         filename = filename.trim();
 
+        // Reports keyed by something other than an RGD ID: ontology terms, pathway diagrams and
+        // expected ranges carry an accession, website pages a WordPress page id ("WP:<id>").
+        const keyedReports = [
+            [/^RGD\s+Ontology(?:\s+Term)?\s+Report\s+-\s+.+?\s+\(([A-Za-z]+:\d+)\)$/,
+                acc => `https://rgd.mcw.edu/rgdweb/ontology/annot.html?acc_id=${acc}`],
+            [/^RGD\s+Pathway\s+Report\s+-\s+.+?\s+\((PW:\d+)\)$/,
+                acc => `https://rgd.mcw.edu/rgdweb/pathway/pathwayRecord.html?acc_id=${acc}`],
+            [/^RGD\s+Expected\s+Range\s+Report\s+-\s+.+?\s+\((CMO:\d+)\)$/,
+                () => 'https://rgd.mcw.edu/rgdweb/phenominer/phenominerExpectedRanges/views/home.html'],
+            [/^RGD\s+Website\s+Report\s+-\s+.+?\s+\(WP:(\d+)\)$/,
+                id => `https://rgd.mcw.edu/wg/?page_id=${id}`],
+        ];
+        for (const [keyedPattern, toUrl] of keyedReports) {
+            const keyedMatch = filename.match(keyedPattern);
+            if (keyedMatch) {
+                return `<a href="${toUrl(keyedMatch[1])}" target="_blank">${filename}</a>`;
+            }
+        }
+
         // Check if this is an RGD report: "RGD <Type> Report - <Name> (<RGD_ID>)"
         const rgdPattern = /^RGD\s+(\w+)\s+Report\s+-\s+(.+?)\s+\((\d+)\)$/;
         const rgdMatch = filename.match(rgdPattern);
