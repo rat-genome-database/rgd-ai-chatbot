@@ -286,6 +286,22 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
         this.fullTextRefreshHours = refreshHours;
     }
 
+    private volatile FileNameIndex fileNameIndex;
+
+    /** Created on first use, like {@link #fullTextTerms()}; refreshed on the same schedule. */
+    private FileNameIndex fileNameIndex() {
+        FileNameIndex f = fileNameIndex;
+        if (f == null) {
+            synchronized (this) {
+                if (fileNameIndex == null) {
+                    fileNameIndex = new FileNameIndex(entityManager, fullTextRefreshHours);
+                }
+                f = fileNameIndex;
+            }
+        }
+        return f;
+    }
+
     /** Created on first use: the EntityManager is injected after construction. */
     private FullTextTerms fullTextTerms() {
         FullTextTerms t = fullTextTerms;
@@ -567,12 +583,17 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
             }
 
             Set<String> matchedFileNames = new LinkedHashSet<>();
+            // Report names in memory (see FileNameIndex); null until first loaded, when the
+            // queries below go to Postgres instead.
+            FileNameIndex.Snapshot names = fileNameIndex().snapshot();
 
             for (String lower : uniqueTokens) {
-                // First try: LIKE substring match
-                List<String> matches = entityManager.createNativeQuery(
-                        "SELECT DISTINCT file_name FROM document_embeddings " +
-                        "WHERE LOWER(file_name) LIKE ?1 LIMIT " + (MAX_FILES_PER_TERM + 1))
+                // First try: substring match
+                List<String> matches = names != null
+                        ? names.containing(lower, MAX_FILES_PER_TERM + 1)
+                        : entityManager.createNativeQuery(
+                                "SELECT DISTINCT file_name FROM document_embeddings " +
+                                "WHERE LOWER(file_name) LIKE ?1 LIMIT " + (MAX_FILES_PER_TERM + 1))
                         .setParameter(1, "%" + lower + "%")
                         .getResultList();
 
@@ -581,10 +602,12 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
                     LOG.info("File-name match: '{}' → {} file(s)", lower, matches.size());
                 } else if (matches.size() > MAX_FILES_PER_TERM && lower.matches("[a-z0-9]+")) {
                     // LIKE too broad (e.g. "ace" matching Pcare, Grace, etc.)
-                    // Fallback: Postgres word-boundary regex (\m = word-start, \M = word-end)
-                    List<String> tightMatches = entityManager.createNativeQuery(
-                            "SELECT DISTINCT file_name FROM document_embeddings " +
-                            "WHERE file_name ~* ?1 LIMIT " + (MAX_FILES_PER_TERM + 1))
+                    // Fallback: whole-word match (Postgres \m = word-start, \M = word-end)
+                    List<String> tightMatches = names != null
+                            ? names.containingWord(lower, MAX_FILES_PER_TERM + 1)
+                            : entityManager.createNativeQuery(
+                                    "SELECT DISTINCT file_name FROM document_embeddings " +
+                                    "WHERE file_name ~* ?1 LIMIT " + (MAX_FILES_PER_TERM + 1))
                             .setParameter(1, "\\m" + lower + "\\M")
                             .getResultList();
 
