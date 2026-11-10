@@ -160,23 +160,22 @@ public interface DocumentEmbeddingOpenAIRepository extends JpaRepository<Documen
             "ORDER BY o.symbol, o.species", nativeQuery = true)
     List<SymbolSpeciesProjection> findSpeciesBySymbols(@Param("symbols") Collection<String> symbols);
 
-    // Full-text search using GIN index + ts_rank with OR semantics.
-    // plainto_tsquery uses AND (all terms must match) — too restrictive for natural language queries.
-    // Convert & to | so chunks matching ANY query term are found, ranked by how many they match.
+    // Full-text search over a tsquery the caller has already planned (see FullTextTerms):
+    // lexemes quoted and joined with & or |, parsed with the 'simple' configuration so they
+    // are matched as given rather than stemmed a second time. GIN index on tsv + ts_rank.
     //
-    // A query of nothing but stop words reduces to an empty tsquery, which matches no rows
-    // rather than erroring — so no guard is needed on the caller's side.
+    // The caller drops words common to most chunks first. Ranking every chunk that matches
+    // "rat" or "gene" is what made the old OR-everything query take up to 44 s.
     @Query(value = "SELECT de.id, de.chunk, de.file_name AS fileName, de.created_at AS createdAt, " +
             "de.rgd_id AS rgdId, de.section, " +
             "ts_rank(de.tsv, q) AS similarityScore " +
-            "FROM document_embeddings de, " +
-            "to_tsquery('english', replace(CAST(plainto_tsquery('english', :query) AS text), ' & ', ' | ')) AS q " +
+            "FROM document_embeddings de, to_tsquery('simple', :tsquery) AS q " +
             "WHERE de.tsv @@ q " +
             "AND (de.section IS NULL OR de.section NOT IN (:excludedSections)) " +
             "ORDER BY ts_rank(de.tsv, q) DESC " +
             "LIMIT :k", nativeQuery = true)
-    List<DocumentEmbeddingProjection> findByFullTextSearch(
-            @Param("query") String query,
+    List<DocumentEmbeddingProjection> findByTsquery(
+            @Param("tsquery") String tsquery,
             @Param("k") int k,
             @Param("excludedSections") Collection<String> excludedSections
     );

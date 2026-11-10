@@ -27,6 +27,17 @@ public class VectorStoreConfig {
     @Value("${chatbot.full-text.enabled:true}")
     private boolean fullTextEnabled;
 
+    // Lexical-arm word thresholds, as shares of all chunks: words above the first are dropped
+    // from the full-text query, words below the second are also searched on their own.
+    @Value("${chatbot.full-text.common-fraction:0.10}")
+    private double fullTextCommonFraction;
+
+    @Value("${chatbot.full-text.rare-fraction:0.01}")
+    private double fullTextRareFraction;
+
+    @Value("${chatbot.full-text.stats-refresh-hours:6}")
+    private double fullTextRefreshHours;
+
     @PostConstruct
     public void debugBeans() {
         System.out.println("=== ALL EMBEDDING MODEL BEANS ===");
@@ -74,6 +85,7 @@ public class VectorStoreConfig {
 
         PostgresVectorStoreOpenAI store = new PostgresVectorStoreOpenAI(repository, openAiModel);
         store.setFullTextEnabled(fullTextEnabled);
+        store.setFullTextThresholds(fullTextCommonFraction, fullTextRareFraction, fullTextRefreshHours);
         System.out.println("OpenAI VectorStore full-text arm enabled: " + fullTextEnabled);
         return store;
     }

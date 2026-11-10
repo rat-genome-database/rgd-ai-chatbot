@@ -270,8 +270,66 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
     /** Whether the lexical arm runs; off restores pure vector + file-name behaviour. */
     private boolean fullTextEnabled = true;
 
+    // Lexical-arm word thresholds (see FullTextTerms), as shares of all chunks.
+    private double fullTextCommonFraction = 0.10;
+    private double fullTextRareFraction = 0.01;
+    private double fullTextRefreshHours = 6;
+    private volatile FullTextTerms fullTextTerms;
+
     public void setFullTextEnabled(boolean fullTextEnabled) {
         this.fullTextEnabled = fullTextEnabled;
+    }
+
+    public void setFullTextThresholds(double commonFraction, double rareFraction, double refreshHours) {
+        this.fullTextCommonFraction = commonFraction;
+        this.fullTextRareFraction = rareFraction;
+        this.fullTextRefreshHours = refreshHours;
+    }
+
+    /** Created on first use: the EntityManager is injected after construction. */
+    private FullTextTerms fullTextTerms() {
+        FullTextTerms t = fullTextTerms;
+        if (t == null) {
+            synchronized (this) {
+                if (fullTextTerms == null) {
+                    fullTextTerms = new FullTextTerms(entityManager, fullTextCommonFraction,
+                            fullTextRareFraction, fullTextRefreshHours);
+                }
+                t = fullTextTerms;
+            }
+        }
+        return t;
+    }
+
+    /**
+     * The lexical arm: chunks containing all of the question's non-common words, topped up
+     * with chunks containing any of its rare words when that finds fewer than {@code k}.
+     * Empty when the question has only common words, or before word frequencies are loaded.
+     */
+    private List<DocumentEmbeddingProjection> fullTextSearch(String query, int k, Collection<String> excluded) {
+        FullTextTerms.Plan plan = fullTextTerms().plan(query);
+        if (plan == null || plan.allTerms() == null) {
+            LOG.info("Full-text arm skipped: {}", plan == null
+                    ? "word frequencies not loaded yet" : "only common words in the question");
+            return new ArrayList<>();
+        }
+        List<DocumentEmbeddingProjection> results = new ArrayList<>(repository.findByTsquery(plan.allTerms(), k, excluded));
+        if (results.size() < k && plan.rareTerms() != null && !plan.rareTerms().equals(plan.allTerms())) {
+            Set<Long> seen = new HashSet<>();
+            for (DocumentEmbeddingProjection p : results) {
+                seen.add(p.getId());
+            }
+            for (DocumentEmbeddingProjection p : repository.findByTsquery(plan.rareTerms(), k, excluded)) {
+                if (results.size() >= k) {
+                    break;
+                }
+                if (seen.add(p.getId())) {
+                    results.add(p);
+                }
+            }
+        }
+        LOG.info("Full-text arm searched {} -> {} chunk(s)", plan.searched(), results.size());
+        return results;
     }
 
     /** Add 1/(k + rank) for each result, so a document ranked well by either arm rises. */
@@ -383,8 +441,7 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
             List<DocumentEmbeddingProjection> textResults = new ArrayList<>();
             if (fullTextEnabled) {
                 try {
-                    textResults = repository.findByFullTextSearch(
-                            query, topK, excludedOrSentinel(excludedSections));
+                    textResults = fullTextSearch(query, topK, excludedOrSentinel(excludedSections));
                 } catch (Exception e) {
                     // Never let the lexical arm take down the search; vector results still stand.
                     LOG.error("Full-text arm failed, continuing with vector results only: {}", e.getMessage());
