@@ -145,8 +145,10 @@ class FullTextTerms {
     @SuppressWarnings("unchecked")
     private void load() {
         long start = System.currentTimeMillis();
+        // to_regclass(), not a ::regclass cast: Hibernate reads "::" in a native query as an escaped
+        // colon and sent Postgres "'document_embeddings':regclass", a syntax error.
         Number estimate = (Number) entityManager.createNativeQuery(
-                "SELECT reltuples FROM pg_class WHERE oid = 'document_embeddings'::regclass")
+                "SELECT reltuples FROM pg_class WHERE oid = to_regclass('document_embeddings')")
                 .getSingleResult();
         double rows = estimate == null ? 0 : estimate.doubleValue();
         // reltuples is -1 (never analyzed) or 0 on an empty or new table: read it all.
