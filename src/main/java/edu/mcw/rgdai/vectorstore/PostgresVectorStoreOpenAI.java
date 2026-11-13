@@ -251,6 +251,54 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
     }
 
     /**
+     * Report names ending in {@code (<id>)}: the report for an RGD ID, ontology accession or
+     * website page ({@code WP:152}), which is how every report name ends. An accession can name
+     * two reports, such as a pathway's ontology term and its diagram, so all are returned.
+     *
+     * @param id an identifier the caller has already validated; it is matched literally
+     */
+    @Transactional(readOnly = true)
+    @SuppressWarnings("unchecked")
+    public List<String> reportNamesForId(String id) {
+        if (id == null || id.isBlank()) {
+            return new ArrayList<>();
+        }
+        String suffix = "(" + id.trim() + ")";
+        String lowered = suffix.toLowerCase(Locale.ROOT);
+        List<String> out = new ArrayList<>();
+        FileNameIndex.Snapshot names = fileNameIndex().snapshot();
+        List<String> candidates = names != null
+                ? names.containing(lowered, 20)
+                : entityManager.createNativeQuery(
+                        "SELECT DISTINCT file_name FROM document_embeddings WHERE file_name LIKE ?1 LIMIT 20")
+                .setParameter(1, "%" + suffix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_"))
+                .getResultList();
+        for (String name : candidates) {
+            if (name.toLowerCase(Locale.ROOT).endsWith(lowered)) {
+                out.add(name);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * The chunks of each named report most similar to {@code query}, at most {@code perReport}
+     * from each, in report order. The query is embedded once for all of them.
+     */
+    @Transactional(readOnly = true)
+    public List<Document> chunksFromReports(Collection<String> fileNames, String query, int perReport) {
+        if (fileNames == null || fileNames.isEmpty() || perReport <= 0) {
+            return new ArrayList<>();
+        }
+        float[] queryEmbedding = embeddingModel.embedForResponse(List.of(query)).getResults().get(0).getOutput();
+        List<DocumentEmbeddingProjection> rows = new ArrayList<>();
+        for (String fileName : fileNames) {
+            rows.addAll(repository.findByFileNameOrderedBySimilarity(queryEmbedding, fileName, perReport));
+        }
+        return toDocuments(rows);
+    }
+
+    /**
      * Placeholder for "exclude nothing".
      *
      * <p>{@code NOT IN ()} is not valid SQL, so the exclusion list is never allowed to be

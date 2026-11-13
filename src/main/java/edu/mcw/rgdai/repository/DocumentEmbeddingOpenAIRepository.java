@@ -160,6 +160,15 @@ public interface DocumentEmbeddingOpenAIRepository extends JpaRepository<Documen
             "ORDER BY o.symbol, o.species", nativeQuery = true)
     List<SymbolSpeciesProjection> findSpeciesBySymbols(@Param("symbols") Collection<String> symbols);
 
+    /**
+     * The record an RGD ID names, for a chat opened from that record's page on the RGD site.
+     * Empty when the ID is not a gene, QTL, strain, cell line or reference in the index.
+     */
+    @Query(value = "SELECT rgd_id AS rgdId, object_type AS objectType, symbol, species, name, " +
+            "file_name AS fileName " +
+            "FROM report_object WHERE rgd_id = :rgdId LIMIT 1", nativeQuery = true)
+    java.util.Optional<ReportObjectProjection> findReportObjectByRgdId(@Param("rgdId") long rgdId);
+
     // Full-text search over a tsquery the caller has already planned (see FullTextTerms):
     // lexemes quoted and joined with & or |, parsed with the 'simple' configuration so they
     // are matched as given rather than stemmed a second time. GIN index on tsv + ts_rank.

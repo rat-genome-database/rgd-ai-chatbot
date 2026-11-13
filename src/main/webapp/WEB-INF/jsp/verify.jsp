@@ -106,7 +106,8 @@
             if (data.success) {
                 console.log('Verification successful! Redirecting to chat...');
                 // Store verification in session and redirect
-                window.location.href = contextPath + '/chat-verified';
+                // Keep ?page=...&id=..., the RGD page the chat was opened from.
+                window.location.href = contextPath + '/chat-verified' + window.location.search;
             } else {
                 console.error('Verification failed:', data.message);
                 showError('Our system has detected potential automated activity. Please try again later. If the issue persists, contact us at RGD-Data@mcw.edu');

@@ -192,6 +192,13 @@ const hideTypingIndicator = () => {
     }
 };
 
+// The RGD page this chat was opened from (?page=gene-report&id=2004), sent with every question
+// until the user clears it. The server checks both against page-context.json and the index.
+const pageParams = new URLSearchParams(window.location.search);
+let pageContext = pageParams.get('page') ? { page: pageParams.get('page'), id: pageParams.get('id') } : null;
+
+const pageFields = () => pageContext ? { page: pageContext.page, pageId: pageContext.id } : {};
+
 // Streaming toggle - set to false to use the old non-streaming behavior
 const USE_STREAMING = true;
 
@@ -205,7 +212,7 @@ const postQuestion = (question) => {
         headers: {
             "Content-Type": "application/json"
         },
-        body: JSON.stringify({ question: question, model: selectedModel() })
+        body: JSON.stringify({ question: question, model: selectedModel(), ...pageFields() })
     })
         .then(res => res.json())
         .then(handleResponse)
@@ -228,7 +235,7 @@ const postQuestionStream = (question) => {
             "Content-Type": "application/json",
             "Accept": "text/event-stream"
         },
-        body: JSON.stringify({ question: question, model: selectedModel() })
+        body: JSON.stringify({ question: question, model: selectedModel(), ...pageFields() })
     })
     .then(response => {
         if (!response.ok) {
@@ -362,7 +369,9 @@ const SUGGESTED_QUESTIONS = [
     "Which rat strains are models for hypertension?"
 ];
 
-const showWelcome = () => {
+// page: what /chat-openai/page-context returned for the RGD page the chat was opened from,
+// or undefined for the standalone chat.
+const showWelcome = (page) => {
     const welcome = document.createElement('div');
     welcome.className = 'welcome';
     // Same Rat Chat logo as the chat header; the JSP supplies its URL.
@@ -372,11 +381,19 @@ const showWelcome = () => {
         <h3>What would you like to know?</h3>
         <p>Ask about rat genes, QTLs, strains and their disease associations. Answers cite the RGD reports they come from.</p>
         <div class="suggestions"></div>`;
+    if (page) {
+        // Set as text: the subject is a record name from the index.
+        welcome.querySelector('h3').textContent = page.subject
+            ? `Ask about ${page.subject} or this page` : `Ask about the ${page.label}`;
+        welcome.querySelector('p').textContent = 'Questions about the record or how to use the page are answered '
+            + 'from RGD\'s reports and help pages, with the sources cited.';
+    }
+    const questions = page && page.suggestions && page.suggestions.length ? page.suggestions : SUGGESTED_QUESTIONS;
     // Lift the question box into the card so it is the first thing people see; removeWelcome
     // puts it back above the footnote once the conversation starts.
     welcome.insertBefore(document.querySelector('.composer'), welcome.querySelector('.suggestions'));
     const list = welcome.querySelector('.suggestions');
-    SUGGESTED_QUESTIONS.forEach(q => {
+    questions.forEach(q => {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'suggestion';
@@ -388,6 +405,54 @@ const showWelcome = () => {
         list.appendChild(button);
     });
     document.querySelector('#transcript').appendChild(welcome);
+};
+
+// The bar under the header naming the page the chat was opened from, with a button to stop
+// using it as context.
+const showPageContextBar = (label) => {
+    const bar = document.getElementById('pageContextBar');
+    if (!bar) return;
+    bar.textContent = '';
+    const text = document.createElement('span');
+    text.className = 'page-context-label';
+    text.textContent = `Asking about: ${label}`;
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'page-context-clear';
+    clear.title = 'Stop using this page as context';
+    clear.setAttribute('aria-label', clear.title);
+    clear.textContent = '\u00d7';
+    clear.addEventListener('click', () => {
+        pageContext = null;
+        bar.hidden = true;
+        history.replaceState(null, '', window.location.pathname);
+    });
+    bar.append(text, clear);
+    bar.hidden = false;
+};
+
+const initPageContext = () => {
+    if (!pageContext) {
+        showWelcome();
+        return;
+    }
+    const query = new URLSearchParams({ page: pageContext.page });
+    if (pageContext.id) query.set('id', pageContext.id);
+    fetch(`${contextPath}/chat-openai/page-context?${query}`)
+        .then(res => res.ok ? res.json() : {})
+        .then(data => {
+            if (!data.label) {
+                pageContext = null;   // not a page type the server knows
+                showWelcome();
+                return;
+            }
+            showPageContextBar(data.label);
+            showWelcome(data);
+        })
+        .catch(error => {
+            console.error('Error loading page context:', error);
+            showWelcome();
+        });
 };
 
 const removeWelcome = () => {
@@ -656,7 +721,7 @@ const initUIEvents = () => {
         });
     }
 
-    showWelcome();
+    initPageContext();
 
     const startOverBtn = document.getElementById('startOverBtn');
     startOverBtn.addEventListener('click',startOverChat);

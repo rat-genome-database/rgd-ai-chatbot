@@ -1,0 +1,139 @@
+{
+  "_comment": [
+    "Pages of the RGD website that can open the chatbot with their context, as /assistant/chat?page=<key>&id=<id>.",
+    "label: how the page is named to the model and in the chat's context bar.",
+    "idKind: 'rgd' for a numeric RGD ID, 'accession' for an ontology accession such as DOID:9001309, 'none' for a page about no single record.",
+    "help: RGD website help articles for the page, by WordPress page ID; their chunks most relevant to the question are added to the context.",
+    "objectSuggestions: example questions when the page names a record ({name} is replaced by it); pageSuggestions: questions about the page itself."
+  ],
+  "pages": {
+    "gene-report": {
+      "label": "gene report page",
+      "idKind": "rgd",
+      "help": ["WP:4698", "WP:152", "WP:826", "WP:158"],
+      "objectSuggestions": ["What is {name} and what does it do?", "What diseases is {name} associated with?"],
+      "pageSuggestions": ["How do I read the annotations on this page?", "What do the evidence codes on this page mean?"]
+    },
+    "qtl-report": {
+      "label": "QTL report page",
+      "idKind": "rgd",
+      "help": ["WP:4585", "WP:162"],
+      "objectSuggestions": ["What trait is {name} associated with?", "What are the candidate genes for {name}?"],
+      "pageSuggestions": ["What information does a QTL report show?", "How is a QTL's position determined?"]
+    },
+    "strain-report": {
+      "label": "strain report page",
+      "idKind": "rgd",
+      "help": ["WP:165", "WP:167", "WP:110"],
+      "objectSuggestions": ["What is {name} used as a model for?", "How was {name} developed?"],
+      "pageSuggestions": ["How do I find out whether a strain is available?", "What do the strain nomenclature symbols mean?"]
+    },
+    "reference-report": {
+      "label": "reference report page",
+      "idKind": "rgd",
+      "help": ["WP:4482", "WP:175"],
+      "objectSuggestions": ["What did this paper find?", "Which genes and strains were annotated from this paper?"],
+      "pageSuggestions": ["What information does a reference report show?"]
+    },
+    "marker-report": {
+      "label": "marker report page",
+      "idKind": "rgd",
+      "help": ["WP:4812", "WP:173"],
+      "objectSuggestions": ["Where is {name} located?"],
+      "pageSuggestions": ["What information does a marker report show?"]
+    },
+    "cellline-report": {
+      "label": "cell line report page",
+      "idKind": "rgd",
+      "help": ["WP:189"],
+      "objectSuggestions": ["What is {name} derived from?", "What is {name} used for?"],
+      "pageSuggestions": ["What information does a report page show?"]
+    },
+    "ontology-report": {
+      "label": "ontology term report page",
+      "idKind": "accession",
+      "help": ["WP:4537", "WP:183", "WP:555"],
+      "objectSuggestions": ["What does the term {name} mean?", "What are the broader and narrower terms for {name}?"],
+      "pageSuggestions": ["How do I read the annotations on this page?", "What is an ontology?"]
+    },
+    "pathway-diagram": {
+      "label": "pathway diagram page",
+      "idKind": "accession",
+      "help": ["WP:853", "WP:830"],
+      "objectSuggestions": ["What happens in the {name}?", "Which genes are in the {name}?"],
+      "pageSuggestions": ["How do I read a pathway diagram?"]
+    },
+    "ontology-browser": {
+      "label": "ontology browser",
+      "idKind": "none",
+      "help": ["WP:181", "WP:179", "WP:4284"],
+      "pageSuggestions": ["How do I use the ontology browser?", "How do I search for an ontology term?"]
+    },
+    "gene-search": {
+      "label": "gene search page",
+      "idKind": "none",
+      "help": ["WP:198", "WP:200", "WP:193"],
+      "pageSuggestions": ["How do I search for genes?", "Can I search by chromosome position?"]
+    },
+    "site-search": {
+      "label": "site search page",
+      "idKind": "none",
+      "help": ["WP:195", "WP:193"],
+      "pageSuggestions": ["How do I search RGD?", "How do I filter search results?"]
+    },
+    "marker-search": {
+      "label": "marker search page",
+      "idKind": "none",
+      "help": ["WP:171"],
+      "pageSuggestions": ["How do I search for markers?"]
+    },
+    "olga": {
+      "label": "OLGA (Object List Generator and Analyzer) tool",
+      "idKind": "none",
+      "help": ["WP:818"],
+      "pageSuggestions": ["How do I build a gene list with OLGA?", "How do I combine two lists in OLGA?"]
+    },
+    "jbrowse": {
+      "label": "JBrowse genome browser",
+      "idKind": "none",
+      "help": ["WP:218", "WP:220", "WP:222", "WP:230"],
+      "pageSuggestions": ["How do I add tracks in JBrowse?", "What do the variant tracks show?"]
+    },
+    "gviewer": {
+      "label": "GViewer genome viewer",
+      "idKind": "none",
+      "help": ["WP:204", "WP:849"],
+      "pageSuggestions": ["How do I use GViewer?"]
+    },
+    "genome-viewer": {
+      "label": "genome viewer",
+      "idKind": "none",
+      "help": ["WP:185", "WP:206"],
+      "pageSuggestions": ["How do I use the genome viewer?"]
+    },
+    "phenominer": {
+      "label": "PhenoMiner tool",
+      "idKind": "none",
+      "help": ["WP:210", "WP:5114"],
+      "pageSuggestions": ["How do I find phenotype measurements in PhenoMiner?", "How do I compare strains in PhenoMiner?"]
+    },
+    "moet": {
+      "label": "MOET (Multi Ontology Enrichment Tool)",
+      "idKind": "none",
+      "help": ["WP:3987", "WP:5098"],
+      "pageSuggestions": ["How do I run an enrichment analysis with MOET?"]
+    },
+    "genome-scanner": {
+      "label": "Genome Scanner tool",
+      "idKind": "none",
+      "help": ["WP:208"],
+      "pageSuggestions": ["How do I use the Genome Scanner?"]
+    },
+    "disease-portal": {
+      "label": "disease portal",
+      "idKind": "none",
+      "help": ["WP:855", "WP:5408", "WP:234"],
+      "pageSuggestions": ["How do I use the disease portals?", "What tools are on the disease portals?"]
+    }
+  }
+}

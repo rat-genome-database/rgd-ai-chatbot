@@ -10,6 +10,8 @@ import edu.mcw.rgdai.repository.DocumentEmbeddingOpenAIRepository;
 import edu.mcw.rgdai.repository.RegionMemberProjection;
 import edu.mcw.rgdai.repository.SymbolSpeciesProjection;
 import edu.mcw.rgdai.vectorstore.PostgresVectorStoreOpenAI;
+import edu.mcw.rgdai.service.PageContextService;
+import edu.mcw.rgdai.service.PageContextService.PageContext;
 import edu.mcw.rgdai.service.RecaptchaService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -94,6 +96,10 @@ public class ChatControllerOpenAI {
     private final ChatModel openAiChatModel;
     private final DocumentEmbeddingOpenAIRepository repository;
     private final RecaptchaService recaptchaService;
+    private final PageContextService pageContextService;
+    /** Chunks drawn from the report of the record on the user's page, and from each of its help articles. */
+    private static final int PAGE_REPORT_CHUNKS = 12;
+    private static final int PAGE_HELP_CHUNKS = 3;
     private static final String CHAT_MEMORY_CONVERSATION_ID_KEY = "chat_memory_conversation_id";
     private final ExecutorService streamExecutor = Executors.newCachedThreadPool();
     private final ExecutorService fanoutExecutor;
@@ -123,7 +129,8 @@ public class ChatControllerOpenAI {
             @Value("${chatbot.query-rewrite.temperature:1.0}") String rewriteTemperatureValue,
             @Value("${chatbot.corpus.coverage-note:The knowledge base currently contains RAT (Rattus norvegicus) records ONLY. Human, mouse and all other species are not loaded yet.}") String corpusCoverageNote,
             DocumentEmbeddingOpenAIRepository repository,
-            RecaptchaService recaptchaService) {
+            RecaptchaService recaptchaService,
+            PageContextService pageContextService) {
 
         LOG.info("Initializing OpenAI ChatController with system messages for doc context");
         this.openaiVectorStore = openaiVectorStore;
@@ -159,6 +166,7 @@ public class ChatControllerOpenAI {
         this.corpusCoverageNote = corpusCoverageNote;
         this.repository = repository;
         this.recaptchaService = recaptchaService;
+        this.pageContextService = pageContextService;
         this.chatMemory = new InMemoryChatMemory();
 
         LOG.info("Configured OpenAI Model from properties: {}", configuredModel);
@@ -271,6 +279,26 @@ public class ChatControllerOpenAI {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("default", configuredModel);
         result.put("models", selectableModels);
+        return result;
+    }
+
+    /**
+     * What the chat page shows for the RGD page it was opened from: the context bar's label and
+     * the welcome card's example questions. Empty when the page is not a configured type.
+     */
+    @GetMapping("/page-context")
+    public Map<String, Object> pageContext(@RequestParam(value = "page", required = false) String page,
+                                           @RequestParam(value = "id", required = false) String id) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        PageContext pc = pageContextService.resolve(page, id);
+        if (pc == null) {
+            return result;
+        }
+        String label = pc.type.label();
+        result.put("label", pc.hasSubject() ? pc.subject + " " + label.replaceFirst(" page$", "") : label);
+        result.put("subject", pc.hasSubject() ? pc.subject : null);
+        result.put("species", pc.species);
+        result.put("suggestions", pc.suggestions());
         return result;
     }
 
@@ -898,6 +926,68 @@ public class ChatControllerOpenAI {
     }
 
     /**
+     * The named records other than the one on the user's page. That record is pinned from its
+     * own report (see withPageDocuments), so it needs neither a symbol lookup nor a species
+     * question: the page already says which species.
+     */
+    private static List<String> withoutPageRecord(List<String> entities, PageContext page) {
+        if (page == null || !page.hasSubject() || page.objectType == null || entities == null) {
+            return entities;
+        }
+        String own = PostgresVectorStoreOpenAI.normalizeSymbol(page.subject);
+        List<String> out = new ArrayList<>();
+        for (String e : entities) {
+            if (e != null && !PostgresVectorStoreOpenAI.normalizeSymbol(e).equals(own)) {
+                out.add(e);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Put the page's own material ahead of what retrieval found: the chunks of the record's
+     * report most relevant to the question, always, and the page's help articles where they
+     * bear on it. Help that does not (a data question asked from a gene page) stays out rather
+     * than crowding the context.
+     */
+    private List<Document> withPageDocuments(PageContext page, String query, List<Document> documents) {
+        if (page == null || !(openaiVectorStore instanceof PostgresVectorStoreOpenAI store)) {
+            return documents;
+        }
+        List<Document> pinned = new ArrayList<>();
+        try {
+            pinned.addAll(store.chunksFromReports(page.reportNames, query, PAGE_REPORT_CHUNKS));
+            for (Document d : store.chunksFromReports(page.helpNames, query, PAGE_HELP_CHUNKS)) {
+                Object similarity = d.getMetadata().get("similarity");
+                if (similarity instanceof Number n && n.doubleValue() >= 0.35) {
+                    pinned.add(d);
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("Page context: could not read the page's reports, answering from retrieval only: {}",
+                    e.getMessage());
+            return documents;
+        }
+        if (pinned.isEmpty()) {
+            return documents;
+        }
+
+        LinkedHashMap<Object, Document> merged = new LinkedHashMap<>();
+        for (Document d : pinned) {
+            merged.putIfAbsent(docKey(d), d);
+        }
+        int limit = Math.max(maxContextDocs, fanoutMaxDocs);
+        for (Document d : documents) {
+            if (merged.size() >= limit) {
+                break;
+            }
+            merged.putIfAbsent(docKey(d), d);
+        }
+        LOG.info("Page context: {} chunk(s) from the page's report and help, {} in context", pinned.size(), merged.size());
+        return new ArrayList<>(merged.values());
+    }
+
+    /**
      * Single hybrid (vector + full-text) retrieval pass.
      */
     private List<Document> runSearch(String query, int topK) {
@@ -1038,7 +1128,7 @@ public class ChatControllerOpenAI {
      * Falls back to the original question with no entities on any failure - a degraded
      * query beats a failed request.
      */
-    private QueryAnalysis analyzeQuery(String question, String conversationId) {
+    private QueryAnalysis analyzeQuery(String question, String conversationId, PageContext page) {
         QueryAnalysis analysis = new QueryAnalysis();
         analysis.searchQuery = question;
 
@@ -1070,6 +1160,21 @@ public class ChatControllerOpenAI {
         String historyBlock = transcript.length() == 0
                 ? "(none - this is the first question of the conversation)"
                 : transcript.toString();
+
+        String pageBlock;
+        if (page == null) {
+            pageBlock = "(none - the chat was not opened from an RGD page)";
+        } else if (page.hasSubject()) {
+            pageBlock = "The user is on " + page.describe() + ". When the message leaves its subject"
+                    + " implicit (\"this gene\", \"this term\", \"this page\", \"it\") and the conversation"
+                    + " history does not supply another, the subject is " + page.subject + ": write it into"
+                    + " \"query\"" + (page.objectType != null ? " and list it in \"entities\"" : "") + "."
+                    + " A question about using the page itself should name the " + page.type.label()
+                    + " in \"query\".";
+        } else {
+            pageBlock = "The user is on " + page.describe() + ". A question about using the page or"
+                    + " \"this tool\" should name the " + page.type.label() + " in \"query\".";
+        }
 
         String analysisSystem = """
         You prepare a user's message for a document retrieval system covering Rat Genome
@@ -1143,10 +1248,13 @@ public class ChatControllerOpenAI {
         - If you cannot fill in both the object type and the chromosome, set
           "enumeration" to false.
 
+        CURRENT PAGE:
+        %s
+
         CONVERSATION HISTORY:
         ---------------------
         %s---------------------
-        """.formatted(historyBlock);
+        """.formatted(pageBlock, historyBlock);
 
         try {
             String raw = rewriteClient.prompt()
@@ -1237,7 +1345,13 @@ public class ChatControllerOpenAI {
 
         // STAGE 0: Resolve follow-ups into a standalone query and pull out the specific
         // records being asked about.
-        QueryAnalysis analysis = analyzeQuery(question.getQuestion(), conversationId);
+        // The RGD page the chat was opened from, if any: "this gene" means the record it shows.
+        PageContext page = pageContextService.resolve(question.getPage(), question.getPageId());
+        if (page != null) {
+            LOG.info("Page context: {} | reports={} | help={}", page.describe(), page.reportNames, page.helpNames.size());
+        }
+
+        QueryAnalysis analysis = analyzeQuery(question.getQuestion(), conversationId, page);
         String searchQuery = analysis.searchQuery;
         result.searchQuery = searchQuery;
         result.tRewrite = System.currentTimeMillis();
@@ -1257,7 +1371,10 @@ public class ChatControllerOpenAI {
 
         // Silent while one species is loaded; produces a note only when a named record
         // genuinely exists for several.
-        String speciesNote = speciesDisambiguation(analysis.entities);
+        // The record on the user's page is pinned below, from its own report: looking it up by
+        // symbol would pull in every species' record of that name and ask which one was meant.
+        List<String> namedElsewhere = withoutPageRecord(analysis.entities, page);
+        String speciesNote = speciesDisambiguation(namedElsewhere);
 
         // STAGES 1+2: Retrieve and re-rank.
         //
@@ -1266,7 +1383,7 @@ public class ChatControllerOpenAI {
         // stays as the fallback for names the lookup cannot resolve - an alias, a typo, or
         // an object whose metadata has not been backfilled yet.
         List<Document> documents;
-        List<Document> exact = exactLookup(analysis.entities);
+        List<Document> exact = exactLookup(namedElsewhere);
 
         if (!exact.isEmpty()) {
             documents = exact;
@@ -1297,6 +1414,7 @@ public class ChatControllerOpenAI {
             }
             result.t2 = System.currentTimeMillis();
         }
+        documents = withPageDocuments(page, searchQuery, documents);
         LOG.info("Stage 2: Re-ranked and selected top {} documents", documents.size());
         LOG.info("OpenAI - Total documents for context: {}", documents.size());
 
@@ -1315,6 +1433,15 @@ public class ChatControllerOpenAI {
         // follow it and cannot be mistaken for just another retrieved excerpt.
         // Ahead of everything else: whether the question is even answerable as asked comes
         // before any material that might answer it.
+        if (page != null) {
+            contextBuilder.append("--- CURRENT PAGE ---\n")
+                    .append("The user opened this chat from ").append(page.describe()).append(".\n");
+            if (!page.helpNames.isEmpty()) {
+                contextBuilder.append("Help articles for this page: ")
+                        .append(String.join("; ", page.helpNames)).append("\n");
+            }
+            contextBuilder.append("--- END CURRENT PAGE ---\n\n");
+        }
         if (speciesNote != null) {
             contextBuilder.append(speciesNote);
         }
@@ -1549,6 +1676,16 @@ public class ChatControllerOpenAI {
              them clearly separated.
            - If the user already named a species, use it and do not ask again.
            - A symbol absent from the block is not ambiguous; answer normally.
+
+        16. THE PAGE THE USER IS ON
+           - A block marked "CURRENT PAGE" says which RGD page the user opened this chat from.
+           - "This gene", "this page", "this term", "it" and other references with no stated
+             subject mean the record on that page, unless the conversation has since moved on
+             to another one.
+           - That record's species is known; do not ask which species they mean for it.
+           - Questions about using the page or tool are answered from the help articles the
+             block names, which are in the context.
+           - The block is not a source of facts in itself; take facts from the documents.
 
         RELATED LINKS (REQUIRED):
 

@@ -81,6 +81,8 @@
             </div>
         </div>
 
+        <div id="pageContextBar" class="page-context-bar" hidden></div>
+
         <div id="transcript"></div>
 
         <div class="input-area">

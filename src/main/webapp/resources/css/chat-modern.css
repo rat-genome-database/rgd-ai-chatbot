@@ -504,10 +504,52 @@
     display: block;
 }
 
+/* ---- Context bar: the RGD page the chat was opened from ---- */
+
+.chat-modern .page-context-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 24px;
+    background: var(--brand-tint);
+    border-bottom: 1px solid var(--line);
+    color: var(--ink);
+    font-size: 14px;
+}
+
+.chat-modern .page-context-bar[hidden] {
+    display: none;
+}
+
+.chat-modern .page-context-label {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.chat-modern .page-context-clear {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.chat-modern .page-context-clear:hover {
+    border-color: var(--brand);
+    color: var(--brand);
+}
+
 /* ---- Small screens ---- */
 
 @media (max-width: 640px) {
     .chat-modern #header,
+    .chat-modern .page-context-bar,
     .chat-modern #transcript,
     .chat-modern .input-area {
         padding-left: 14px;
