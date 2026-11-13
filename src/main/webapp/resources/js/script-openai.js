@@ -199,6 +199,21 @@ let pageContext = pageParams.get('page') ? { page: pageParams.get('page'), id: p
 
 const pageFields = () => pageContext ? { page: pageContext.page, pageId: pageContext.id } : {};
 
+// A question typed into the "Ask RatChat" box on an RGD page arrives as ?q=...; it is asked once,
+// as soon as the chat is ready, and dropped from the address bar so a reload does not ask it again.
+let pendingQuestion = (pageParams.get('q') || '').trim().slice(0, 2000);
+
+const askPendingQuestion = () => {
+    if (!pendingQuestion) return;
+    const question = pendingQuestion;
+    pendingQuestion = '';
+    const url = new URL(window.location.href);
+    url.searchParams.delete('q');
+    history.replaceState(null, '', url.pathname + url.search);
+    document.querySelector('#userInput').value = question;
+    submitTypedText();
+};
+
 // Streaming toggle - set to false to use the old non-streaming behavior
 const USE_STREAMING = true;
 
@@ -434,6 +449,7 @@ const showPageContextBar = (label) => {
 const initPageContext = () => {
     if (!pageContext) {
         showWelcome();
+        askPendingQuestion();
         return;
     }
     const query = new URLSearchParams({ page: pageContext.page });
@@ -444,14 +460,17 @@ const initPageContext = () => {
             if (!data.label) {
                 pageContext = null;   // not a page type the server knows
                 showWelcome();
+                askPendingQuestion();
                 return;
             }
             showPageContextBar(data.label);
             showWelcome(data);
+            askPendingQuestion();
         })
         .catch(error => {
             console.error('Error loading page context:', error);
             showWelcome();
+            askPendingQuestion();
         });
 };
 
