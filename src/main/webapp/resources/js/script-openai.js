@@ -38,6 +38,11 @@ const handleResponse = (response) => {
     enhancedAnswer = formatRelatedLinks(enhancedAnswer);
     enhancedAnswer = cleanupClinicalTrialSources(enhancedAnswer);
     addToTranscript("AI", enhancedAnswer);
+    if (response.pageUsed) {
+        const entries = document.querySelectorAll('#transcript .AIEntry');
+        const last = entries[entries.length - 1];
+        if (last && last.firstElementChild) last.firstElementChild.prepend(pageUsedNote());
+    }
 };
 // Function to convert NCT IDs to clickable links
 const convertNCTToLinks = (text) => {
@@ -317,7 +322,9 @@ const postQuestionStream = (question) => {
                     const eventData = dataLines.join('\n');
 
                     if (eventName === 'metadata') {
-                        // metadata received, no action needed during streaming
+                        try {
+                            if (JSON.parse(eventData).pageUsed) contentDiv.prepend(pageUsedNote());
+                        } catch (e) { /* no note */ }
                     } else if (eventName === 'token') {
                         rawText += eventData;
                         // Strip [[, ]], and .md so smd doesn't misinterpret as link syntax
@@ -430,15 +437,28 @@ const showWelcome = (page) => {
     document.querySelector('#transcript').appendChild(welcome);
 };
 
+// The page the chat was opened from, as named in the bar; null once the user clears it.
+let pageLabel = null;
+
+// Above an answer given with the user's page in context. The server leaves the page out of
+// questions that are not about it, so the note shows which answers it shaped.
+const pageUsedNote = () => {
+    const note = document.createElement('div');
+    note.className = 'page-used-note';
+    note.textContent = `Answered with the ${pageLabel || 'page you came from'} as context`;
+    return note;
+};
+
 // The bar under the header naming the page the chat was opened from, with a button to stop
 // using it as context.
 const showPageContextBar = (label) => {
     const bar = document.getElementById('pageContextBar');
     if (!bar) return;
+    pageLabel = label;
     bar.textContent = '';
     const text = document.createElement('span');
     text.className = 'page-context-label';
-    text.textContent = `Asking about: ${label}`;
+    text.textContent = `Opened from the ${label}. It is used for questions about it.`;
     const clear = document.createElement('button');
     clear.type = 'button';
     clear.className = 'page-context-clear';
@@ -447,6 +467,7 @@ const showPageContextBar = (label) => {
     clear.textContent = '\u00d7';
     clear.addEventListener('click', () => {
         pageContext = null;
+        pageLabel = null;
         bar.hidden = true;
         history.replaceState(null, '', window.location.pathname);
     });

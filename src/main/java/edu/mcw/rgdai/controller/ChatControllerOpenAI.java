@@ -358,7 +358,9 @@ public class ChatControllerOpenAI {
             TIMING_LOG.info("  -----------------------------");
             TIMING_LOG.info("  TOTAL:               {}ms ({}s)", total, String.format("%.2f", total / 1000.0));
 
-            return new Answer(response);
+            Answer answer = new Answer(response);
+            answer.setPageUsed(pp.pageUsed);
+            return answer;
 
         } catch (Exception e) {
             LOG.error("OpenAI - Error generating response with model {}: {}", model, e.getMessage(), e);
@@ -424,6 +426,11 @@ public class ChatControllerOpenAI {
             StringBuilder fullResponse = new StringBuilder();
 
             try {
+                // Ahead of the answer, so the page can say whether it was answered with the
+                // user's page in context.
+                emitter.send(SseEmitter.event().name("metadata")
+                        .data("{\"pageUsed\":" + ppFinal.pageUsed + "}"));
+
                 chatClient.prompt()
                         .system(ppFinal.systemMessage)
                         .user(question.getQuestion())
@@ -1124,6 +1131,14 @@ public class ChatControllerOpenAI {
 
         /** True when the user is asking where named records are, rather than about them. */
         boolean positionQuery;
+
+        /**
+         * Whether the question is about the page the chat was opened from or its record. The
+         * page goes along with every question asked from AI Mode in the site's search box, where
+         * people type general questions too; only these are answered with the page in context.
+         * True when the analysis cannot tell, so "this gene" keeps its meaning.
+         */
+        boolean aboutPage = true;
     }
 
     /**
@@ -1198,7 +1213,8 @@ public class ChatControllerOpenAI {
         {"query": "<standalone search query>", "entities": ["<name>", "..."],
          "regionQuery": false, "regionAnchor": "", "regionTargetType": "",
          "positionQuery": false, "enumeration": false,
-         "enumObjectType": "", "enumChromosome": "", "enumAssembly": ""}
+         "enumObjectType": "", "enumChromosome": "", "enumAssembly": "",
+         "aboutPage": true}
 
         "query" RULES:
         - Resolve all pronouns and implicit references ("they", "those", "any others",
@@ -1260,6 +1276,18 @@ public class ChatControllerOpenAI {
           "enumAssembly" to the assembly if the user named one (e.g. "GRCr8"), else "".
         - If you cannot fill in both the object type and the chromosome, set
           "enumeration" to false.
+
+        "aboutPage" RULES:
+        - Whether the message is about the page under CURRENT PAGE below. Set true when
+          there is no page.
+        - true when the message is about that page's record or the page itself: it leaves
+          its subject implicit ("this gene", "it", "what does it do", "what is the gene
+          description"), names the page's record, or asks how to use the page or tool.
+        - false when it is about something else and would be asked the same way from any
+          page: "what genes are associated with hypertension", "what is Tp53" asked from
+          the A2m page, "list the QTLs on chromosome 1".
+        - false when the conversation history has moved on to another record and the
+          message continues about that one.
 
         CURRENT PAGE:
         %s
@@ -1323,6 +1351,7 @@ public class ChatControllerOpenAI {
             analysis.regionAnchor = node.path("regionAnchor").asText("").trim();
             analysis.regionTargetType = node.path("regionTargetType").asText("").trim();
             analysis.positionQuery = node.path("positionQuery").asBoolean(false);
+            analysis.aboutPage = node.path("aboutPage").asBoolean(true);
 
             LOG.info("Query analysis: \"{}\" -> \"{}\" | entities={} | regionQuery={} | enumeration={} {} chr{}",
                     question, analysis.searchQuery, analysis.entities, analysis.regionQuery,
@@ -1345,6 +1374,8 @@ public class ChatControllerOpenAI {
         Set<String> usedFilenames;
         String searchQuery;
         boolean isEmpty;
+        /** Whether the answer has the user's page in context; false also when there is no page. */
+        boolean pageUsed;
         long t0, tRewrite, t1, t2, t3;
     }
 
@@ -1365,6 +1396,13 @@ public class ChatControllerOpenAI {
         }
 
         QueryAnalysis analysis = analyzeQuery(question.getQuestion(), conversationId, page);
+        if (page != null && !analysis.aboutPage) {
+            // A general question typed from the page: answered as if asked in RatChat itself,
+            // not steered toward the page's record by its pinned report.
+            LOG.info("Page context: question is not about {}; answering without it", page.describe());
+            page = null;
+        }
+        result.pageUsed = page != null;
         String searchQuery = analysis.searchQuery;
         result.searchQuery = searchQuery;
         result.tRewrite = System.currentTimeMillis();

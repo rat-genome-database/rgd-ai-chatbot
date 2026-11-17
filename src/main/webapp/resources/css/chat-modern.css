@@ -545,6 +545,12 @@
     color: var(--brand);
 }
 
+.chat-modern .page-used-note {
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
 /* ---- Small screens ---- */
 
 @media (max-width: 640px) {
