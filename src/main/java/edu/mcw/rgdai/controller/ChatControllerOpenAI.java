@@ -311,7 +311,7 @@ public class ChatControllerOpenAI {
         LOG.info("OpenAI - Received question: {}", question.getQuestion());
         LOG.info("Processing with model: {}", model);
 
-        String conversationId = getOrCreateConversationId(user, request);
+        String conversationId = getOrCreateConversationId(user, request, question.getConversation());
         LOG.info("Using conversation ID: {}", conversationId);
 
         if (isGreeting(question.getQuestion())) {
@@ -377,7 +377,7 @@ public class ChatControllerOpenAI {
 
         SseEmitter emitter = new SseEmitter(180_000L); // 3 minute timeout
 
-        String conversationId = getOrCreateConversationId(user, request);
+        String conversationId = getOrCreateConversationId(user, request, question.getConversation());
         HttpSession session = request.getSession();
 
         // Handle greetings immediately
@@ -511,12 +511,25 @@ public class ChatControllerOpenAI {
 
     @PostMapping("/reset-memory")
     public ResponseEntity<Map<String, String>> resetChatMemory(
+            @RequestBody(required = false) Map<String, String> body,
             Authentication user,
             HttpServletRequest request) {
 
         LOG.info("OpenAI - Reset chat memory requested");
         try {
-            String oldId = getOrCreateConversationId(user, request);
+            String conversation = body == null ? null : body.get("conversation");
+            if (isPageConversation(conversation)) {
+                // Only this chat page's memory; the page starts a new conversation of its own.
+                String id = getOrCreateConversationId(user, request, conversation);
+                chatMemory.clear(id);
+                LOG.info("OpenAI - Cleared memory for conversation ID: {}", id);
+                Map<String, String> resp = new HashMap<>();
+                resp.put("status", "success");
+                resp.put("message", "Chat memory cleared successfully");
+                return ResponseEntity.ok(resp);
+            }
+
+            String oldId = getOrCreateConversationId(user, request, null);
             chatMemory.clear(oldId);
             LOG.info("OpenAI - Cleared memory for conversation ID: {}", oldId);
 
@@ -1741,13 +1754,25 @@ public class ChatControllerOpenAI {
                 + "( how are you( doing)?| how s it going)?");
     }
 
-    private String getOrCreateConversationId(Authentication user, HttpServletRequest request) {
+    /**
+     * The memory a question is answered with: the session's conversation, narrowed to the chat
+     * page it was asked from when the page sends its own ID. Each chat page load starts empty and
+     * restores no earlier messages, so without that every RatChat tab in a browser shared one
+     * memory: a tab opened from the A2m page answered "what is the gene description" about the
+     * Tp53 asked about in another tab.
+     */
+    private String getOrCreateConversationId(Authentication user, HttpServletRequest request, String conversation) {
         String conversationId = (String) request.getSession().getAttribute("openai_conversation_id");
         if (conversationId == null) {
             conversationId = (user != null) ? user.getName() : request.getSession().getId();
             request.getSession().setAttribute("openai_conversation_id", conversationId);
         }
-        return conversationId;
+        return isPageConversation(conversation) ? conversationId + ":" + conversation : conversationId;
+    }
+
+    /** A chat page's conversation ID as the page makes it: letters, digits and dashes. */
+    private static boolean isPageConversation(String conversation) {
+        return conversation != null && conversation.matches("[A-Za-z0-9-]{8,64}");
     }
 
     /**

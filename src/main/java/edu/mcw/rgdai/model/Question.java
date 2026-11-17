@@ -8,6 +8,8 @@ public class Question {
     private String page;
     /** RGD ID or accession of the record on that page; null when the page shows none. */
     private String pageId;
+    /** The chat page's own conversation, so two RatChat tabs do not share one memory; null = the session's. */
+    private String conversation;
 
     public Question() {
     }
@@ -46,5 +48,13 @@ public class Question {
 
     public void setPageId(String pageId) {
         this.pageId = pageId;
+    }
+
+    public String getConversation() {
+        return conversation;
+    }
+
+    public void setConversation(String conversation) {
+        this.conversation = conversation;
     }
 }

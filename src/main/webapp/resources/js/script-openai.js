@@ -199,6 +199,14 @@ let pageContext = pageParams.get('page') ? { page: pageParams.get('page'), id: p
 
 const pageFields = () => pageContext ? { page: pageContext.page, pageId: pageContext.id } : {};
 
+// This chat page's own conversation. The page shows no earlier messages when it opens, so it must
+// not answer from them either: without its own ID every RatChat tab in the browser shared one
+// memory, and a tab opened from the A2m page answered about the gene asked about in another tab.
+const newConversationId = () => (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+let conversationId = newConversationId();
+
 // A question typed into the "Ask RatChat" box on an RGD page arrives as ?q=...; it is asked once,
 // as soon as the chat is ready, and dropped from the address bar so a reload does not ask it again.
 let pendingQuestion = (pageParams.get('q') || '').trim().slice(0, 2000);
@@ -227,7 +235,7 @@ const postQuestion = (question) => {
         headers: {
             "Content-Type": "application/json"
         },
-        body: JSON.stringify({ question: question, model: selectedModel(), ...pageFields() })
+        body: JSON.stringify({ question: question, model: selectedModel(), conversation: conversationId, ...pageFields() })
     })
         .then(res => res.json())
         .then(handleResponse)
@@ -250,7 +258,7 @@ const postQuestionStream = (question) => {
             "Content-Type": "application/json",
             "Accept": "text/event-stream"
         },
-        body: JSON.stringify({ question: question, model: selectedModel(), ...pageFields() })
+        body: JSON.stringify({ question: question, model: selectedModel(), conversation: conversationId, ...pageFields() })
     })
     .then(response => {
         if (!response.ok) {
@@ -515,11 +523,13 @@ const startOverChat = () => {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
-            }
+            },
+            body: JSON.stringify({ conversation: conversationId })
         })
             .then(res => res.json())
             .then(data => {
                 if (data.status === "success") {
+                    conversationId = newConversationId();
                     addToTranscript("RGD", "Chat memory cleared - starting fresh conversation");
                 } else {
                     addToTranscript("RGD", "Error: " + data.message);
